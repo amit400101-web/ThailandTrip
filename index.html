@@ -663,7 +663,7 @@ body:not(.edit-mode) .del-btn{display:none!important}
 .tr-hdr .inp,
 .tl-hdr .inp {
   background:rgba(255,255,255,.15) !important;
-  border:1px dashed rgba(255,255,255,.5) !important;
+  border:1px solid rgba(255,255,255,.5) !important;
   color:#fff !important;
 }
 .hotel-hdr .inp:focus,
@@ -693,7 +693,7 @@ body:not(.edit-mode) .del-btn{display:none!important}
 .flight-hdr [contenteditable],
 .tr-hdr [contenteditable],
 .tl-hdr [contenteditable] {
-  border-bottom:1.5px dashed rgba(255,255,255,.4);
+  border-bottom:1.5px solid rgba(255,255,255,.4);
 }
 .hotel-hdr [contenteditable]:focus,
 .flight-hdr [contenteditable]:focus,
@@ -706,7 +706,7 @@ body:not(.edit-mode) .del-btn{display:none!important}
 
 /* --- תיקון: שדות רגילים במצב עריכה --- */
 body.edit-mode .inp {
-  border:1.5px dashed rgba(13,124,138,.35);
+  border:1.5px solid rgba(13,124,138,.35);
   background:var(--gold-soft) !important; /* גוון קרם שמשתלב בעיצוב */
   color:var(--text) !important;
   transition:all .2s;
@@ -718,7 +718,7 @@ body.edit-mode .inp:focus {
   box-shadow:0 0 0 3px rgba(13,124,138,.1);
 }
 body.edit-mode [contenteditable]{
-  border-bottom:1.5px dashed rgba(13,124,138,.35);
+  border-bottom:1.5px solid rgba(13,124,138,.35);
   padding:1px 3px;border-radius:3px;
   min-width:40px;display:inline-block;
   transition:background .2s;
@@ -1074,7 +1074,7 @@ select.inp{cursor:pointer}
 .attr-name{font-weight:700;font-size:.9rem;color:var(--teal-d);margin-bottom:7px;padding-left:24px;line-height:1.4}
 .attr-meta{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
 .attr-notes{font-size:.76rem;color:var(--text-l);border-top:1px solid var(--border-s);padding-top:8px;margin-top:8px;line-height:1.5}
-.attr-notes[contenteditable]:focus{outline:1px dashed var(--teal-l);border-radius:3px}
+.attr-notes[contenteditable]:focus{outline:1px solid var(--teal-l);border-radius:3px}
 .rm-btn{
   position:absolute;top:10px;left:10px;
   background:none;border:none;color:var(--text-ll);
