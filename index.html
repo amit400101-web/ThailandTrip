@@ -1825,6 +1825,92 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(el) el.addEventListener('input',()=>{ updatePax(); dQ(); });
   });
 });
+  <div class="section-hdr">🏠 סקירה כללית</div>
+  <div class="card" style="text-align: center; background: rgba(255,255,255,0.9)!important; border: 2px solid var(--teal); border-radius: 12px; margin-bottom: 20px;">
+    <div style="font-weight: 700; color: var(--teal-d); margin-bottom: 10px; font-size: 1.1rem;">📄 ייצוא תוכנית הטיול</div>
+    <div style="font-size: 0.8rem; color: var(--text-l); margin-bottom: 12px;">הפקת קובץ טקסט מסודר עם כל פרטי הטיול, הטיסות, המלונות וריכוז התקציבים המלא.</div>
+    <button class="btn btn-teal" onclick="exportTripToFather()" style="width: 100%; justify-content: center; font-size: 1rem; padding: 12px;">⬇️ הורד קובץ תוכנית</button>
+  </div>
+  /* ══════════════════════════════════════════════════════
+   EXPORT TO TEXT FILE 
+══════════════════════════════════════════════════════ */
+function exportTripToFather() {
+  const savedState = localStorage.getItem('thailand_local_db');
+  if(!savedState) {
+    showToast('⚠️ אין נתונים לייצוא. ודא שהזנת נתונים ולחצת על "שמור נתונים".');
+    return;
+  }
+  
+  const state = JSON.parse(savedState);
+  let text = "🌴 תוכנית הטיול המשפחתי - תאילנד 2026 🌴\n";
+  text += "========================================\n\n";
+
+  // פרטים כלליים
+  const depDate = state.globals['depDate'] || 'לא צוין';
+  const retDate = state.globals['retDate'] || 'לא צוין';
+  const numDays = state.globals['numDays'] || 'לא צוין';
+  const fam1 = state.globals['fam1Name'] || 'משפחה א׳';
+  const fam2 = state.globals['fam2Name'] || 'משפחה ב׳';
+
+  text += `📅 תאריכים: יציאה ${depDate} | חזרה ${retDate}\n`;
+  text += `⏱️ סה"כ ימי טיול: ${numDays}\n`;
+  text += `👥 הרכב: ${fam1}, ${fam2}\n\n`;
+
+  // טיסות
+  text += "✈️ טיסות בינלאומיות\n";
+  text += "-------------------\n";
+  if (state.intlFlights && state.intlFlights.length > 0) {
+    state.intlFlights.forEach((f, idx) => {
+      text += `${idx + 1}. מ-${f.from} אל ${f.to} | חברת תעופה: ${f.airline || 'לא ידוע'} | תאריך: ${f.date || 'לא נקבע'}\n`;
+    });
+  } else {
+    text += "טרם הוזמנו טיסות בינלאומיות.\n";
+  }
+  text += "\n";
+
+  // מלונות
+  text += "🏨 לינה ומלונות\n";
+  text += "---------------\n";
+  if (state.hotels && state.hotels.length > 0) {
+    state.hotels.forEach((h, idx) => {
+      text += `${idx + 1}. ${h.title} - ${h.name || 'שם מלון לא הוזן'}\n`;
+      text += `   תאריכים: צ'ק-אין ${h.checkin || '?'} | צ'ק-אאוט ${h.checkout || '?'}\n`;
+    });
+  } else {
+    text += "טרם הוזמנו מלונות.\n";
+  }
+  text += "\n";
+
+  // תקציב
+  text += "💰 ריכוז תקציב והוצאות\n";
+  text += "----------------------\n";
+  // שאיבת הנתונים ישירות מהממשק המוצג
+  const totalA = document.getElementById('total-a') ? document.getElementById('total-a').textContent : '₪0';
+  const totalB = document.getElementById('total-b') ? document.getElementById('total-b').textContent : '₪0';
+  const grandTotal = document.getElementById('grand-total') ? document.getElementById('grand-total').textContent : '₪0';
+
+  text += `סה"כ עלות משוערת לכל הטיול: ${grandTotal}\n\n`;
+  text += `חלוקה למשפחות:\n`;
+  text += `- ${fam1}: ${totalA}\n`;
+  text += `- ${fam2}: ${totalB}\n\n`;
+  
+  text += "הערות משותפות:\n";
+  text += state.globals['sharedNotes'] ? state.globals['sharedNotes'] : "אין הערות.";
+  text += "\n\n========================================\n";
+  text += "הופק מתוך מערכת תכנון הטיול.";
+
+  // יצירת קובץ להורדה
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "תוכנית_טיול_תאילנד.txt";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  
+  showToast('✅ הקובץ ירד בהצלחה!');
+}
 </script>
 </body>
 </html>
