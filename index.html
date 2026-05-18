@@ -3605,20 +3605,27 @@ document.addEventListener('DOMContentLoaded', () => {
     if(el) el.addEventListener('input', () => { updatePax(); dQ(); });
   });
 
+ // חלוקת מזהים ייחודיים לכל שדות הטקסט כדי שיוכלו להיטען בהצלחה
+  window.initCEIDs = function() {
+    document.querySelectorAll('[contenteditable]:not([data-ceid])').forEach((el, i) => {
+      const parent = el.closest('[id]');
+      const key = (parent ? parent.id + '_' : '') + el.className.split(' ')[0] + '_' + i;
+      el.dataset.ceid = key;
+    });
+  };
+
   // טעינה מ-Firestore — אחרי שכל ה-DOM מוכן
-  // מחכה ש-Firebase Auth יסיים (שיגדיר _firestoreLoadPending)
   function tryFirestoreLoad(){
-    if(window._firestoreLoadPending && window.loadFromFirestore){
+    if(window._firestoreLoadPending && typeof window.loadFromFirestore === 'function'){
+      window.initCEIDs(); // חלוקת תעודות הזהות לפני הטעינה
       window._firestoreLoadPending = false;
       window.loadFromFirestore();
-    } else if(!window._firestoreLoadReady){
-      // Firebase עוד לא התחבר — ממשיך לחכות
+    } else {
+      // ממשיך לחכות עד ש-Firebase Auth יסיים להתחבר
       setTimeout(tryFirestoreLoad, 200);
     }
   }
   setTimeout(tryFirestoreLoad, 300);
-});
-
 
 </script><div class="save-bar">
   <div class="save-bar-left">
