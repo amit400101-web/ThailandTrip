@@ -980,14 +980,13 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db   = firebase.firestore();
-const ADMIN_UID = 'i7wwUriW1hVwERBQUThtP6ZN1Ew1';
+  const ADMIN_UID = 'i7wwUriW1hVwERBQUThtP6ZN1Ew1';
 const TRIP_DOC  = db.collection('tripData').doc('main');
 
-
-// 🛠️ השורות החדשות שיפתרו את שגיאות ה-WebChannel וה-RPC:
+// ✅ התיקון המעודכן שמונע את ההתנגשות ומייצב את החיבור:
 db.settings({
-  experimentalForceLongPolling: true, // מאלץ שימוש בפרוטוקול HTTP יציב שאינו נחסם
-  merge: true
+  experimentalForceLongPolling: true,         // מאלץ מעבר לפרוטוקול היציב
+  experimentalAutoDetectLongPolling: false    // מכבה את הזיהוי האוטומטי כדי למנוע את השגיאה
 });
 
 /* ══════════════════════════════════════════════════════
