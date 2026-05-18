@@ -1458,8 +1458,7 @@ function applyState(state){
 setTimeout(()=>{
   calcBudgets(); updatePax(); updateProgress(); countHotels();
   countAttr(); calcDays(); startCountdown(); updateFamNames();
-
-  isLoading = false; // 🔓 הטעינה הסתיימה בהצלחה, כעת המערכת רשאית לשמור שינויים חדשים
+}isLoading = false; // 🔓 הטעינה הסתיימה בהצלחה, כעת המערכת רשאית לשמור שינויים חדשים
 }, 100);
 function fillFlight(div, f){
   const spans = div.querySelectorAll('.flight-route span[contenteditable]');
