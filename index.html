@@ -1,0 +1,3731 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>🌴 THAILAND 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Hebrew:wght@400;700;900&family=Cinzel:wght@400;600;700&family=Noto+Sans+Hebrew:wght@300;400;600;700&display=swap" rel="stylesheet">
+<script type="module">
+/* ══════════════════════════════════════
+   FIREBASE CONFIG
+══════════════════════════════════════ */
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, GoogleAuthProvider, signInWithPopup, updateProfile }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, updateDoc }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const ADMIN_UID = 'i7wwUriW1hVwERBQUThtP6ZN1Ew1';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyC0CtWOFA2tPDE83HL7bhycDycHtWb5zzs",
+  authDomain: "thailand-2026-bb29e.firebaseapp.com",
+  projectId: "thailand-2026-bb29e",
+  storageBucket: "thailand-2026-bb29e.firebasestorage.app",
+  messagingSenderId: "582357782952",
+  appId: "1:582357782952:web:ebead09ce7c951b8354d9d"
+};
+
+const app   = initializeApp(firebaseConfig);
+const auth  = getAuth(app);
+const db    = getFirestore(app);
+const gProvider = new GoogleAuthProvider();
+
+/* ══ אווטארים: תמונות פרימיום ══ */
+const AVATARS = [
+  {id:'elephant', emoji:'🐘', label:'פיל', bg:'linear-gradient(135deg,#1b5e20,#388e3c)'},
+  {id:'tiger',    emoji:'🐯', label:'נמר', bg:'linear-gradient(135deg,#bf360c,#e64a19)'},
+  {id:'monkey',   emoji:'🐒', label:'קוף', bg:'linear-gradient(135deg,#4e342e,#8d6e63)'},
+  {id:'turtle',   emoji:'🐢', label:'צב', bg:'linear-gradient(135deg,#006064,#00838f)'},
+  {id:'lotus',    emoji:'🪷', label:'לוטוס', bg:'linear-gradient(135deg,#880e4f,#c2185b)'},
+  {id:'dragon',   emoji:'🐉', label:'דרקון', bg:'linear-gradient(135deg,#4a148c,#7b1fa2)'},
+  {id:'buddha',   emoji:'🙏', label:'בודהה', bg:'linear-gradient(135deg,#e65100,#f57c00)'},
+  {id:'coconut',  emoji:'🥥', label:'קוקוס', bg:'linear-gradient(135deg,#827717,#f9a825)'}
+];
+
+// Helper: render avatar as emoji circle
+function avatarHTML(av, size=38, border='2px solid rgba(255,255,255,0.9)') {
+  const a = AVATARS.find(x=>x.id===av?.id||x.id===av) || AVATARS[0];
+  return `<div style="width:${size}px;height:${size}px;border-radius:50%;background:${a.bg};display:inline-flex;align-items:center;justify-content:center;font-size:${Math.round(size*0.52)}px;border:${border};box-shadow:0 2px 8px rgba(0,0,0,0.2);flex-shrink:0;cursor:pointer">${a.emoji}</div>`;
+}
+
+let currentUser  = null;
+let currentAvatar = AVATARS[0];
+let canEdit = false;
+window.canEdit = false; // גלובלי לגישה מחוץ ל-module
+let unsubChat = null;
+let unsubUsers = null;
+
+/* ══════════════════════════════════════
+   AUTH STATE
+══════════════════════════════════════ */
+onAuthStateChanged(auth, async user => {
+  if(user){
+    currentUser = user;
+    const isAdmin = user.uid === ADMIN_UID;
+
+    // קרא/צור פרופיל
+    const uRef = doc(db,'users', user.uid);
+    const snap = await getDoc(uRef);
+    let avatarId = AVATARS[0].id;
+    if(snap.exists()){
+      canEdit   = snap.data().canEdit || isAdmin;
+      window.canEdit = canEdit;
+      avatarId  = snap.data().avatar  || AVATARS[0].id;
+    } else {
+      canEdit = isAdmin;
+      window.canEdit = canEdit;
+      await setDoc(uRef,{
+        email: user.email,
+        displayName: user.displayName || user.email.split('@')[0],
+        avatar: avatarId,
+        canEdit: isAdmin,
+        joinedAt: serverTimestamp()
+      });
+    }
+    currentAvatar = AVATARS.find(a=>a.id===avatarId) || AVATARS[0];
+    // ensure emoji/bg fields are present
+    if(!currentAvatar.emoji) currentAvatar = AVATARS[0];
+
+    hideAuthOverlay();
+    updateHeaderUser(user, isAdmin);
+    if(canEdit) {
+      document.body.classList.add('edit-mode');
+      const editBtn = document.getElementById('editToggleBtn');
+      if(editBtn){ editBtn.style.display=''; editBtn.textContent='👁️ תצוגה'; }
+    } else {
+      const editBtn = document.getElementById('editToggleBtn');
+      if(editBtn) editBtn.style.display='none';
+    }
+    startRealtimeListeners();
+    // טעינה מ-Firestore רק אחרי שה-DOM כולו מוכן
+    window._firestoreLoadPending = true;
+    showToastFB(`ברוך הבא! הגדרות נטענו בהצלחה.`);
+  } else {
+    currentUser = null;
+    canEdit     = false;
+    window.canEdit = false;
+    document.body.classList.remove('edit-mode');
+    showAuthOverlay();
+    if(unsubChat)  unsubChat();
+    if(unsubUsers) unsubUsers();
+  }
+});
+
+/* ══════════════════════════════════════
+   AUTH UI
+══════════════════════════════════════ */
+function showAuthOverlay(){ document.getElementById('auth-overlay').style.display='flex'; }
+function hideAuthOverlay(){ document.getElementById('auth-overlay').style.display='none'; }
+
+function switchAuthTab(tab){
+  document.querySelectorAll('.auth-tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.auth-panel').forEach(p=>p.style.display='none');
+  document.getElementById('auth-tab-'+tab).classList.add('active');
+  document.getElementById('auth-panel-'+tab).style.display='block';
+}
+
+window.__fbLogin = window.fbLogin = async function(){
+  const email = document.getElementById('login-email').value.trim();
+  const pass  = document.getElementById('login-pass').value;
+  const err   = document.getElementById('login-err');
+  err.textContent = '';
+  try{
+    await signInWithEmailAndPassword(auth, email, pass);
+  } catch(e){
+    err.textContent = 'שגיאה: אימייל או סיסמה שגויים';
+  }
+};
+
+window.__fbRegister = window.fbRegister = async function(){
+  const email = document.getElementById('reg-email').value.trim();
+  const pass  = document.getElementById('reg-pass').value;
+  const name  = document.getElementById('reg-name').value.trim();
+  const av    = document.querySelector('.av-choice.selected')?.dataset.id || AVATARS[0].id;
+  const err   = document.getElementById('reg-err');
+  err.textContent = '';
+  if(!name){ err.textContent = 'נא להכניס שם'; return; }
+  try{
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    await updateProfile(cred.user, { displayName: name });
+    await setDoc(doc(db,'users',cred.user.uid),{
+      email, displayName: name, avatar: av,
+      canEdit: cred.user.uid === ADMIN_UID,
+      joinedAt: serverTimestamp()
+    });
+  } catch(e){
+    err.textContent = e.code==='auth/email-already-in-use' ? 'אימייל כבר קיים' : 'שגיאה בהרשמה';
+  }
+};
+
+window.__fbGoogleLogin = window.fbGoogleLogin = async function(){
+  try{ await signInWithPopup(auth, gProvider); }
+  catch(e){ console.error(e); }
+};
+
+window.__fbLogout = window.fbLogout = async function(){
+  await signOut(auth);
+};
+
+window.__fbGuestLogin = window.fbGuestLogin = async function(){
+  // כניסה כאורח - ללא חשבון, עם הרשאות צפייה בלבד
+  currentUser = { uid: 'guest_' + Date.now(), email: 'guest@local', displayName: 'אורח 🌴', isGuest: true };
+  canEdit = false;
+  currentAvatar = AVATARS[3]; // turtle as guest
+  hideAuthOverlay();
+  const el = document.getElementById('header-user-area');
+  if(el) el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px">
+      ${avatarHTML(currentAvatar,34)}
+      <div style="font-size:.73rem;color:rgba(255,255,255,.9);font-weight:600">אורח</div>
+      <button onclick="showAuthOverlay()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:4px 10px;font-size:.67rem;cursor:pointer;font-family:inherit">התחבר</button>
+    </div>`;
+  showToastFB('👋 ברוך הבא, אורח! כניסה לצפייה בלבד.');
+};
+
+/* ══════════════════════════════════════
+   HEADER USER DISPLAY
+══════════════════════════════════════ */
+function updateHeaderUser(user, isAdmin){
+  const el = document.getElementById('header-user-area');
+  if(!el) return;
+  const av = AVATARS.find(a=>a.id===currentAvatar.id)||AVATARS[0];
+  const displayName = user.displayName || user.email.split('@')[0];
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span onclick="openUserPanel()" title="לחץ לניהול פרופיל" style="cursor:pointer">${avatarHTML(av,38)}</span>
+      <div>
+        <div style="font-size:.75rem;color:rgba(255,255,255,.95);font-weight:700" id="header-display-name">${displayName}</div>
+        ${isAdmin?'<div style="font-size:.62rem;color:var(--gold-l);font-weight:700">👑 מנהל</div>':''}
+      </div>
+      <button onclick="fbLogout()" style="background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.3);color:#fff;border-radius:8px;padding:4px 10px;font-size:.67rem;cursor:pointer;font-family:inherit">יציאה</button>
+    </div>`;
+}
+
+/* ══════════════════════════════════════
+   REAL-TIME LISTENERS
+══════════════════════════════════════ */
+function startRealtimeListeners(){
+  // צ'אט
+  const chatQ = query(collection(db,'chat'), orderBy('ts','asc'));
+  unsubChat = onSnapshot(chatQ, snap => {
+    const box = document.getElementById('chat-messages');
+    if(!box) return;
+    box.innerHTML = '';
+    snap.forEach(d => {
+      const m = d.data();
+      const av = AVATARS.find(a=>a.id===m.avatar)||AVATARS[0];
+      const isMe = m.uid === currentUser?.uid;
+      const div = document.createElement('div');
+      div.style.cssText = `display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;${isMe?'flex-direction:row-reverse':''}`;
+      div.innerHTML = `
+        ${avatarHTML(av,34,'1px solid rgba(255,255,255,0.6)')}
+        <div style="max-width:75%">
+          <div style="font-size:.65rem;color:var(--text-l);margin-bottom:3px;${isMe?'text-align:left':''}">${m.name}</div>
+          <div style="background:${isMe?'var(--teal)':'rgba(255,255,255,0.8)'};color:${isMe?'#fff':'var(--text)'};padding:9px 13px;border-radius:${isMe?'12px 4px 12px 12px':'4px 12px 12px 12px'};font-size:.83rem;box-shadow:var(--shadow-s);line-height:1.4">${m.text}</div>
+        </div>`;
+      box.appendChild(div);
+    });
+    box.scrollTop = box.scrollHeight;
+  });
+
+  // משתמשים מחוברים
+  unsubUsers = onSnapshot(collection(db,'users'), snap => {
+    const cont = document.getElementById('users-list');
+    if(!cont) return;
+    cont.innerHTML = '';
+    snap.forEach(d => {
+      const u = d.data();
+      const av = AVATARS.find(a=>a.id===u.avatar)||AVATARS[0];
+      const isAdmin = d.id === ADMIN_UID;
+      const div = document.createElement('div');
+      div.style.cssText = 'display:flex;align-items:center;gap:10px;background:rgba(255,255,255,0.5);border-radius:var(--r-s);padding:10px 14px;border:1px solid var(--border-s);margin-bottom:8px';
+      div.innerHTML = `
+        ${avatarHTML(av,42,'2px solid rgba(255,255,255,0.9)')}
+        <div style="flex:1">
+          <div style="font-weight:700;font-size:.85rem;color:var(--text)">${u.displayName||u.email} ${isAdmin?'👑':''}</div>
+          <div style="font-size:.7rem;color:var(--text-l)">${u.email}</div>
+        </div>
+        ${(currentUser?.uid===ADMIN_UID && d.id!==ADMIN_UID)?`
+          <label style="display:flex;align-items:center;gap:5px;font-size:.72rem;cursor:pointer;color:var(--teal-d);font-weight:600">
+            <input type="checkbox" ${u.canEdit?'checked':''} onchange="toggleEditPerm('${d.id}',this.checked)" style="accent-color:var(--teal)"> עריכה
+          </label>`:''}`;
+      cont.appendChild(div);
+    });
+  });
+
+  // הצבעות
+  onSnapshot(collection(db,'votes'), snap => {
+    const votes = {};
+    snap.forEach(d => { votes[d.id] = d.data(); });
+    document.querySelectorAll('.attr-card[data-attr-id]').forEach(card => {
+      const id = card.dataset.attrId;
+      const v = votes[id]||{};
+      const yes = Object.values(v).filter(x=>x===true).length;
+      const no  = Object.values(v).filter(x=>x===false).length;
+      const myV = currentUser ? v[currentUser.uid] : undefined;
+      const vDiv = card.querySelector('.vote-area');
+      if(vDiv) vDiv.innerHTML = buildVoteHTML(id, yes, no, myV);
+    });
+  });
+}
+
+function buildVoteHTML(id, yes, no, myVote){
+  return `
+    <div style="display:flex;gap:6px;margin-top:8px;align-items:center">
+      <button onclick="castVote('${id}',true)" style="background:${myVote===true?'#d1fae5':'#f0fdf4'};border:1.5px solid ${myVote===true?'#16a34a':'#bbf7d0'};border-radius:20px;padding:4px 10px;font-size:.72rem;cursor:pointer;font-weight:700;color:#166534">👍 ${yes}</button>
+      <button onclick="castVote('${id}',false)" style="background:${myVote===false?'#fee2e2':'#fff1f2'};border:1.5px solid ${myVote===false?'#dc2626':'#fecaca'};border-radius:20px;padding:4px 10px;font-size:.72rem;cursor:pointer;font-weight:700;color:#991b1b">👎 ${no}</button>
+    </div>`;
+}
+
+window.__castVote = window.castVote = async function(attrId, val){
+  if(!currentUser){ showToastFB('יש להתחבר קודם'); return; }
+  const ref = doc(db,'votes', attrId);
+  await setDoc(ref, { [currentUser.uid]: val }, { merge: true });
+};
+
+window.__sendChatMsg = window.sendChatMsg = async function(){
+  const inp = document.getElementById('chat-input');
+  const text = inp.value.trim();
+  if(!text || !currentUser) return;
+  const uSnap = await getDoc(doc(db,'users',currentUser.uid));
+  const name  = uSnap.data()?.displayName || currentUser.email;
+  const avatar= uSnap.data()?.avatar || AVATARS[0].id;
+  await addDoc(collection(db,'chat'),{ text, uid:currentUser.uid, name, avatar, ts:serverTimestamp() });
+  inp.value = '';
+};
+
+window.__chatKeydown = window.chatKeydown = function(e){ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendChatMsg(); } };
+
+window.__toggleEditPerm = window.toggleEditPerm = async function(uid, val){
+  await updateDoc(doc(db,'users',uid), { canEdit: val });
+  showToastFB(val ? '✅ הרשאת עריכה ניתנה' : '🚫 הרשאת עריכה הוסרה');
+};
+
+/* ══════════════════════════════════════
+   שמירה וטעינה מ-Firestore (משותף לכולם)
+══════════════════════════════════════ */
+const TRIP_DOC = doc(db, 'tripData', 'main');
+
+window.__saveToFirestore = window.saveToFirestore = async function(state){
+  try {
+    const ind = document.getElementById('saveIndicator');
+    if(ind){ ind.className='save-indicator'; ind.querySelector('span').textContent='שומר...'; }
+    
+    // המר ל-JSON ושמור
+    const payload = { 
+      state: JSON.stringify(state), 
+      updatedAt: serverTimestamp(),
+      updatedBy: currentUser ? currentUser.email : 'unknown'
+    };
+    await setDoc(TRIP_DOC, payload);
+    
+    if(ind){ ind.className='save-indicator saved'; ind.querySelector('span').textContent='נשמר ✓'; }
+    console.log('✅ Saved to Firestore successfully');
+  } catch(e){
+    console.error('❌ Firestore save error:', e.code, e.message);
+    const ind = document.getElementById('saveIndicator');
+    if(ind){ ind.className='save-indicator unsaved'; ind.querySelector('span').textContent='שגיאת שמירה: ' + e.code; }
+  }
+};
+
+window.__loadFromFirestore = window.loadFromFirestore = async function(){
+  try {
+    console.log('🔄 מנסה לטעון מ-Firestore...');
+    const ind = document.getElementById('saveIndicator');
+    if(ind) ind.querySelector('span').textContent = 'טוען נתונים...';
+
+    const snap = await getDoc(TRIP_DOC);
+    if(!snap.exists()){ console.log('⚠️ אין מסמך'); if(ind) ind.querySelector('span').textContent='סנכרון נתונים'; return; }
+
+    const raw = snap.data().state;
+    if(!raw){ console.log('⚠️ state ריק'); return; }
+    const state = JSON.parse(raw);
+    console.log('✅ מסמך נמצא, טוען...');
+
+    // ── גלובלים ──
+    if(state.globals){
+      Object.entries(state.globals).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if(el) el.value = val;
+      });
+    }
+
+    // ── contenteditable סטטיים ──
+    if(state.ces){
+      Object.entries(state.ces).forEach(([ceid, html]) => {
+        const el = document.querySelector(`[data-ceid="${ceid}"]`);
+        if(el) el.innerHTML = html;
+      });
+    }
+
+    // ── טיסות בינלאומיות דינמיות ──
+    if(state.intlFlights?.length){
+      const list = document.getElementById('intl-flights-list');
+      state.intlFlights.forEach(f => {
+        // מחק קיים אם יש
+        const old = document.getElementById(f.id);
+        if(old) old.remove();
+        const div = document.createElement('div');
+        div.className = 'flight-card'; div.id = f.id;
+        div.innerHTML = buildFltHTML(f.id, f.from, f.to, f.type, f.airline, '');
+        list.appendChild(div);
+        // מלא נתונים
+        const ffs = div.querySelectorAll('.ff-val');
+        [f.airline,f.flightNum,f.date,f.dep,f.arr,f.conf,f.notes].forEach((v,i)=>{ if(ffs[i]) ffs[i].innerHTML=v; });
+        const sel = div.querySelector('.status-sel');
+        if(sel){ sel.value=f.status; updateStatus(sel); }
+        const ppA = div.querySelector('.flt-a-pp'); if(ppA) ppA.value = f.priceA;
+        const ppB = div.querySelector('.flt-b-pp'); if(ppB) ppB.value = f.priceB;
+      });
+    }
+
+    // ── טיסות פנים דינמיות ──
+    if(state.domFlights?.length){
+      const list = document.getElementById('dom-flights-list');
+      state.domFlights.forEach(f => {
+        const old = document.getElementById(f.id); if(old) old.remove();
+        const div = document.createElement('div');
+        div.className = 'flight-card'; div.id = f.id;
+        div.style.cssText = 'border-right:4px solid var(--coral)';
+        div.innerHTML = buildFltHTML(f.id, f.from, f.to, '🛩️ פנים | Domestic', f.airline, 'background:linear-gradient(to left,#7c2d12,var(--coral))');
+        list.appendChild(div);
+        const ffs = div.querySelectorAll('.ff-val');
+        [f.airline,f.flightNum,f.date,f.dep,f.arr,f.conf,f.notes].forEach((v,i)=>{ if(ffs[i]) ffs[i].innerHTML=v; });
+        const sel = div.querySelector('.status-sel');
+        if(sel){ sel.value=f.status; updateStatus(sel); }
+        const ppA = div.querySelector('.flt-a-pp'); if(ppA) ppA.value = f.priceA;
+        const ppB = div.querySelector('.flt-b-pp'); if(ppB) ppB.value = f.priceB;
+      });
+    }
+
+    // ── מלונות דינמיים ──
+    if(state.hotels?.length){
+      const list = document.getElementById('hotels-list');
+      state.hotels.forEach(h => {
+        const old = document.getElementById(h.id); if(old) old.remove();
+        hc++;
+        const div = document.createElement('div');
+        div.className = 'hotel-card'; div.id = h.id;
+        div.innerHTML = `
+          <div class="hotel-hdr">
+            <div class="hotel-hdr-title" contenteditable="true" oninput="dS()">${h.title}</div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <select class="status-sel s-${h.status}" onchange="updateStatus(this);updateProgress();dS()">
+                <option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option>
+              </select>
+              <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.hotel-card').remove();dQ();countHotels()">🗑️</button>
+            </div>
+          </div>
+          <div class="hotel-body">
+            <div class="form-row">
+              <div class="form-g" style="flex:2"><label>שם המלון</label><input type="text" class="inp" value="${h.name||''}" onchange="dS()"></div>
+              <div class="form-g"><label>דירוג</label><input type="text" class="inp" value="${h.rating||''}" placeholder="⭐⭐⭐⭐" onchange="dS()"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-g"><label>צ׳ק-אין</label><input type="date" class="inp" value="${h.checkin||''}" onchange="dS()"></div>
+              <div class="form-g"><label>צ׳ק-אאוט</label><input type="date" class="inp" value="${h.checkout||''}" onchange="dS()"></div>
+            </div>
+            <div class="form-row">
+              <div class="form-g" style="flex:1">
+                <label>🔗 קישור</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="url" class="inp inp-ltr" id="${h.id}-link" value="${h.link||''}" placeholder="https://..." oninput="updateHotelLink('${h.id}');dS()">
+                  <a id="${h.id}-link-btn" href="${h.link||'#'}" target="_blank" style="${h.link?'':'display:none;'}padding:8px 12px;background:var(--teal);color:#fff;border-radius:8px;font-size:.75rem;white-space:nowrap;text-decoration:none;flex-shrink:0">🌐 פתח</a>
+                </div>
+              </div>
+            </div>
+            <div class="form-row" style="margin-bottom:0">
+              <div class="form-g">
+                <label>📍 מיקום למפה</label>
+                <div style="display:flex;gap:6px;align-items:center">
+                  <input type="text" class="inp inp-ltr" id="${h.id}-loc" value="${h.loc||''}" placeholder="שם המלון, Bangkok" onchange="dS()">
+                  <button onclick="openMap('${h.id}-loc')" class="btn btn-ghost btn-sm" style="white-space:nowrap;flex-shrink:0">🗺️ מפה</button>
+                </div>
+              </div>
+            </div>
+            <div class="fam-split" style="margin-top:14px;border-top:1px solid rgba(0,0,0,0.06)">
+              <div class="fam-col">
+                <div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div>
+                <div class="form-row" style="margin:0;gap:8px">
+                  <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-a-price" value="${h.priceA||''}" placeholder="0" oninput="calcHotel('${h.id}');dQ()"></div>
+                  <div class="form-g"><label>לילות</label><input type="number" class="inp h-a-nights" value="${h.nightsA||''}" placeholder="0" oninput="calcHotel('${h.id}');dQ()"></div>
+                  <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="${h.id}-a-tot" value="₪0"></div>
+                </div>
+              </div>
+              <div class="fam-col">
+                <div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div>
+                <div class="form-row" style="margin:0;gap:8px">
+                  <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-b-price" value="${h.priceB||''}" placeholder="0" oninput="calcHotel('${h.id}');dQ()"></div>
+                  <div class="form-g"><label>לילות</label><input type="number" class="inp h-b-nights" value="${h.nightsB||''}" placeholder="0" oninput="calcHotel('${h.id}');dQ()"></div>
+                  <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="${h.id}-b-tot" value="₪0"></div>
+                </div>
+              </div>
+            </div>
+          </div>`;
+        list.appendChild(div);
+        const sel = div.querySelector('.status-sel');
+        if(sel){ sel.value=h.status; updateStatus(sel); }
+      });
+    }
+
+    // ── העברות דינמיות ──
+    if(state.transfers?.length){
+      const cont = document.getElementById('airport-transfers');
+      // נקה העברות דינמיות (שמור את הסטטיות)
+      const staticCards = Array.from(cont.querySelectorAll('.transfer-card')).slice(0, 3);
+      // מחק הכל ובנה מחדש מהstate
+      while(cont.firstChild) cont.removeChild(cont.firstChild);
+      state.transfers.forEach(t => {
+        const div = document.createElement('div');
+        div.className = 'transfer-card';
+        div.innerHTML = `
+          <div class="tr-hdr" style="${t.hdrStyle}">
+            <div class="tr-route"><span contenteditable="true" oninput="dS()">${t.from}</span><span style="opacity:.4;margin:0 6px">→</span><span contenteditable="true" oninput="dS()">${t.to}</span></div>
+            <select class="status-sel s-${t.status}" onchange="updateStatus(this);updateProgress();dS()">
+              <option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option>
+            </select>
+            <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.transfer-card').remove();dQ()">🗑️</button>
+          </div>
+          <div class="tr-body">
+            <div class="tr-f"><div class="tr-lbl">סוג</div><div class="tr-val" contenteditable="true" oninput="dS()">${t.type}</div></div>
+            <div class="tr-f"><div class="tr-lbl">תאריך</div><div class="tr-val" contenteditable="true" oninput="dS()">${t.date}</div></div>
+            <div class="tr-f"><div class="tr-lbl">שעה</div><div class="tr-val" contenteditable="true" oninput="dS()">${t.time}</div></div>
+            <div class="tr-f"><div class="tr-lbl">עלות (₪)</div><div class="tr-val cost-val" contenteditable="true" oninput="dQ()">${t.cost}</div></div>
+            <div class="tr-f"><div class="tr-lbl">הערות</div><div class="tr-val" contenteditable="true" oninput="dS()">${t.notes}</div></div>
+          </div>`;
+        const sel = div.querySelector('.status-sel');
+        if(sel){ sel.value=t.status; }
+        cont.appendChild(div);
+      });
+    }
+
+    // ── אטרקציות ──
+    ['bangkok','samui','pattaya'].forEach(area => {
+      const key = 'attr' + area.charAt(0).toUpperCase() + area.slice(1);
+      if(!state[key]?.length) return;
+      const grid = document.getElementById('ag-' + area);
+      if(!grid) return;
+      grid.innerHTML = '';
+      state[key].forEach(item => {
+        const d = document.createElement('div');
+        d.className = 'attr-card';
+        d.dataset.attrId = item.attrId || (Math.random().toString(36).slice(2,9));
+        d.innerHTML = `
+          <button class="rm-btn del-btn" onclick="this.closest('.attr-card').remove();countAttr();dQ();">✕</button>
+          <div class="attr-name" contenteditable="true" oninput="dS()">${item.name}</div>
+          <div class="attr-meta"><span class="badge b-teal">💰 ₪${item.cost}</span><span class="badge b-gold">⏱️ ${item.dur}</span></div>
+          <div class="attr-notes" contenteditable="true" oninput="dS()">${item.notes}</div>
+          <button onclick="openMap(null,'${item.name.replace(/'/g,'').replace(/<[^>]*>/g,'')}, Thailand')" class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%;font-size:.72rem">🗺️ פתח במפה</button>`;
+        grid.appendChild(d);
+      });
+    });
+
+    // ── הוצאות ──
+    ['exp-a-table','exp-b-table'].forEach((tbId, ti) => {
+      const rows = ti === 0 ? state.expA : state.expB;
+      if(!rows?.length) return;
+      const tbody = document.getElementById(tbId);
+      if(!tbody) return;
+      tbody.innerHTML = '';
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td contenteditable="true" oninput="dQ()">${row[0]}</td><td contenteditable="true" oninput="dS()">${row[1]}</td><td contenteditable="true" class="exp-amt" oninput="dQ()">${row[2]}</td><td contenteditable="true" oninput="dS()">${row[3]}</td><td><button class="btn btn-red btn-sm del-btn" onclick="this.closest('tr').remove();dQ()">🗑️</button></td>`;
+        tbody.appendChild(tr);
+      });
+    });
+
+    // ── ציר זמן ──
+    if(state.timeline?.length){
+      const items = document.querySelectorAll('#tl-container .tl-item');
+      state.timeline.forEach(t => {
+        const item = items[t.i];
+        if(!item) return;
+        const loc = item.querySelector('.tl-loc-sel');
+        const date = item.querySelector('.tl-date-inp');
+        const notes = item.querySelector('.tl-notes');
+        if(loc) loc.value = t.loc;
+        if(date) date.value = t.date;
+        if(notes) notes.value = t.notes;
+      });
+    }
+
+    // ── עדכון חישובים ──
+    setTimeout(() => {
+      if(typeof calcBudgets==='function') calcBudgets();
+      if(typeof updatePax==='function') updatePax();
+      if(typeof updateProgress==='function') updateProgress();
+      if(typeof countHotels==='function') countHotels();
+      if(typeof countAttr==='function') countAttr();
+      if(typeof calcDays==='function') calcDays();
+      if(typeof startCountdown==='function') startCountdown();
+      if(typeof updateFamNames==='function') updateFamNames();
+    }, 150);
+
+    if(ind){ ind.className='save-indicator saved'; ind.querySelector('span').textContent='סנכרון נתונים'; }
+    console.log('✅ טעינה הושלמה!');
+  } catch(e){
+    console.error('❌ Firestore load error:', e.code, e.message, e);
+  }
+};
+/* ══════════════════════════════════════
+   פאנל משתמש (החלון) - אווטאר ושם
+══════════════════════════════════════ */
+window.__openUserPanel = window.openUserPanel = function(){
+  if(currentUser?.isGuest){ showToastFB('אורח אינו יכול לעדכן פרופיל – יש להירשם תחילה'); return; }
+  document.getElementById('user-panel-overlay').style.display='flex';
+  if(currentUser) {
+    document.getElementById('profile-display-name').value = currentUser.displayName || currentUser.email.split('@')[0];
+    // עדכן תצוגת אווטאר
+    const prev = document.getElementById('panel-avatar-preview');
+    if(prev){ prev.textContent = currentAvatar.emoji; prev.style.background = currentAvatar.bg; }
+    // סימון האווטאר הנוכחי
+    document.querySelectorAll('.av-btn').forEach(b=>b.classList.remove('av-sel'));
+    const activeBtn = document.getElementById('av-btn-' + currentAvatar.id);
+    if(activeBtn) activeBtn.classList.add('av-sel');
+  }
+};
+
+window.__closeUserPanel = window.closeUserPanel = function(){
+  document.getElementById('user-panel-overlay').style.display='none';
+};
+
+window.__updateProfileName = window.updateProfileName = async function() {
+  const newName = document.getElementById('profile-display-name').value.trim();
+  if(!newName || !currentUser) return;
+  try {
+    await updateProfile(currentUser, { displayName: newName });
+    await updateDoc(doc(db,'users',currentUser.uid), { displayName: newName });
+    updateHeaderUser(currentUser, currentUser.uid === ADMIN_UID);
+    showToastFB('✅ השם עודכן בהצלחה!');
+  } catch(e) {
+    console.error(e);
+    showToastFB('❌ שגיאה בעדכון השם');
+  }
+};
+
+window.__changeAvatar = window.changeAvatar = async function(id){
+  document.querySelectorAll('.av-btn').forEach(b=>b.classList.remove('av-sel'));
+  document.getElementById('av-btn-'+id).classList.add('av-sel');
+  currentAvatar = AVATARS.find(a=>a.id===id)||AVATARS[0];
+  // עדכן preview בחלון
+  const prev = document.getElementById('panel-avatar-preview');
+  if(prev){ prev.textContent = currentAvatar.emoji; prev.style.background = currentAvatar.bg; }
+  if(currentUser && !currentUser.isGuest){
+    await updateDoc(doc(db,'users',currentUser.uid),{ avatar: id });
+    updateHeaderUser(currentUser, currentUser.uid===ADMIN_UID);
+    showToastFB('✅ האווטאר עודכן בהצלחה!');
+  }
+};
+
+function showToastFB(msg){
+  let t = document.getElementById('fb-toast');
+  if(!t){ t=document.createElement('div'); t.id='fb-toast'; t.style.cssText='position:fixed;top:70px;left:50%;transform:translateX(-50%) translateY(-20px);background:var(--teal-d);color:#fff;padding:10px 22px;border-radius:8px;font-size:.82rem;opacity:0;transition:all .3s;z-index:9999;white-space:nowrap;pointer-events:none;box-shadow:var(--shadow-l);font-weight:700;text-align:center'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)';
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(-50%) translateY(-20px)'; },3000);
+}
+
+// חשיפה גלובלית
+window.__switchAuthTab = window.switchAuthTab = switchAuthTab;
+// window.openUserPanel already assigned above
+window.closeUserPanel = closeUserPanel;
+window.updateProfileName = updateProfileName;
+
+// טעינת רשימת האווטארים
+document.addEventListener('DOMContentLoaded', () => {
+  const rGrid = document.getElementById('register-avatar-grid');
+  if(rGrid){
+    rGrid.innerHTML = AVATARS.map((a,i)=>`
+      <div class="av-choice${i===0?' selected':''}" data-id="${a.id}" onclick="document.querySelectorAll('#register-avatar-grid .av-choice').forEach(x=>x.classList.remove('selected'));this.classList.add('selected')">
+        <div class="av-emoji-circle" style="background:${a.bg}">${a.emoji}</div>
+        <span class="av-lbl">${a.label}</span>
+      </div>`).join('');
+  }
+  const pGrid = document.getElementById('profile-avatar-grid');
+  if(pGrid){
+    pGrid.innerHTML = AVATARS.map(a=>`
+      <button id="av-btn-${a.id}" class="av-choice av-btn" onclick="changeAvatar('${a.id}')">
+        <div class="av-emoji-circle" style="background:${a.bg}">${a.emoji}</div>
+        <span class="av-lbl">${a.label}</span>
+      </button>`).join('');
+  }
+});
+</script>
+<style>
+/* ══════════════════════════════════════
+   ROOT VARIABLES
+══════════════════════════════════════ */
+:root {
+  --teal:#0d7c8a; --teal-l:#12a3b4; --teal-d:#085a65; --teal-xs:rgba(13,124,138,.08);
+  --teal-soft:#e8f6f8;
+  --gold:#c9943a; --gold-l:#e8b84b; --gold-d:#8b6010; --gold-xs:rgba(201,148,58,.1);
+  --gold-soft:#fdf5e4;
+  --coral:#e05c3a; --coral-soft:#fdf0ec;
+  --fam-a:#0d7c8a; --fam-a-l:#e0f4f7; --fam-a-mid:#b3e0e8;
+  --fam-b:#c9943a; --fam-b-l:#fdf3e3; --fam-b-mid:#f5d9a8;
+  --bg:#f4f7f9; --bg-card:#ffffff;
+  --border:#e2e8ed; --border-s:#edf1f4;
+  --text:#1e2d35; --text-l:#4a6572; --text-ll:#8fa5b0;
+  --white:#fff;
+  --shadow-s:0 1px 4px rgba(0,0,0,.06), 0 2px 8px rgba(0,0,0,.04);
+  --shadow-m:0 2px 12px rgba(0,0,0,.08), 0 4px 24px rgba(0,0,0,.05);
+  --shadow-l:0 8px 32px rgba(0,0,0,.12);
+  --r:16px; --r-s:10px; --r-l:20px;
+  --nav-h:56px;
+  --bottom-nav-h:64px;
+  --safe-bottom:env(safe-area-inset-bottom, 0px);
+}
+
+/* ══════════════════════════════════════
+   RESET & BASE & BACKGROUND
+══════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html{scroll-behavior:smooth}
+
+body{
+  font-family:'Noto Sans Hebrew',sans-serif;
+  background: transparent; 
+  color:var(--text);
+  min-height:100vh;
+  padding-bottom:calc(var(--bottom-nav-h) + var(--safe-bottom) + 140px);
+  overflow-x:hidden;
+}
+
+/* רקע התמונה עם האצת GPU */
+body::before {
+  content: '';
+  position: fixed;
+  top: -5%; left: -5%; right: -5%; bottom: -5%;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(244, 247, 249, 0.75), rgba(244, 247, 249, 0.85)),
+    url('https://images.unsplash.com/photo-1504214208698-ea1916a2195a?q=80&w=2000&auto=format&fit=crop');
+  background-size: cover;
+  background-position: center;
+  animation: panBg 35s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes panBg {
+  0% { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.05) translate(-1%, -1%); }
+}
+
+@media(min-width:768px){ body{padding-bottom:80px} }
+
+/* ══════════════════════════════════════
+   GLASSMORPHISM (זכוכית חלבית)
+══════════════════════════════════════ */
+.card, .flight-card, .hotel-card, .transfer-card, .attr-card, .add-form, .stat-card, .weather-card, .bp-bar {
+  background: rgba(255, 255, 255, 0.6) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.05);
+}
+
+/* שקיפות פנימית בגופים בתוך הכרטיסיות */
+.hotel-body, .flight-body, .tr-body, .tl-body { background: transparent !important; }
+.fam-split { background: rgba(255,255,255,0.4) !important; }
+
+/* ══════════════════════════════════════
+   HEADER
+══════════════════════════════════════ */
+.site-header{
+  background:linear-gradient(135deg, #064a54 0%, #0d7c8a 50%, #12a3b4 100%);
+  position:relative;overflow:hidden;
+  padding:0;
+  box-shadow:0 4px 20px rgba(6,74,84,.35);
+}
+.header-pattern{
+  position:absolute;inset:0;
+  background-image:
+    radial-gradient(ellipse at 10% 60%, rgba(201,148,58,.18) 0%, transparent 45%),
+    radial-gradient(ellipse at 90% 20%, rgba(255,255,255,.06) 0%, transparent 40%),
+    repeating-linear-gradient(55deg, rgba(255,255,255,.025) 0,rgba(255,255,255,.025) 1px,transparent 1px,transparent 28px),
+    repeating-linear-gradient(-55deg, rgba(255,255,255,.025) 0,rgba(255,255,255,.025) 1px,transparent 1px,transparent 28px);
+}
+.header-lotus{
+  position:absolute;left:-20px;top:-20px;opacity:.06;font-size:180px;pointer-events:none;
+  animation:float 8s ease-in-out infinite;
+}
+@media(max-width:768px){ .header-lotus{display:none;} }
+@keyframes float{0%,100%{transform:translateY(0) rotate(-5deg)}50%{transform:translateY(-12px) rotate(5deg)}}
+
+.header-inner{
+  position:relative;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:18px 22px 16px;gap:12px;
+}
+.header-text{flex:1;text-align:center}
+.header-title{
+  font-family:'Cinzel',serif;
+  font-size:clamp(1.1rem,4vw,1.85rem);
+  color:#fff;
+  letter-spacing:3px;
+  text-shadow:0 2px 16px rgba(0,0,0,.3);
+}
+.header-sub{
+  font-family:'Noto Serif Hebrew',serif;
+  font-size:clamp(.68rem,2vw,.82rem);
+  color:rgba(255,255,255,.6);
+  margin-top:3px;
+  letter-spacing:.5px;
+}
+.header-fam-badges{display:flex;gap:7px;flex-shrink:0}
+.fam-badge{
+  padding:7px 14px;border-radius:22px;
+  font-size:.72rem;font-weight:700;
+  cursor:pointer;transition:all .2s;
+  white-space:nowrap;
+  border:1.5px solid;
+}
+.fam-badge-a{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.35);color:#fff}
+.fam-badge-b{background:rgba(201,148,58,.25);border-color:rgba(201,148,58,.6);color:#ffe5a8}
+.fam-badge:hover{transform:translateY(-1px);background:rgba(255,255,255,.22)}
+
+.edit-btn{
+  background:rgba(255,255,255,.14);
+  border:1.5px solid rgba(255,255,255,.3);
+  color:#fff;border-radius:22px;
+  padding:7px 14px;font-size:.72rem;font-weight:700;
+  cursor:pointer;font-family:inherit;
+  transition:all .2s;white-space:nowrap;flex-shrink:0;
+}
+.edit-btn:hover{background:rgba(255,255,255,.22)}
+body.edit-mode .edit-btn{background:var(--gold);border-color:var(--gold);color:#fff}
+
+.header-border{
+  height:3px;
+  background:linear-gradient(to right,transparent,rgba(201,148,58,.6),var(--gold-l),rgba(201,148,58,.6),transparent);
+}
+
+/* ══════════════════════════════════════
+   DESKTOP TOP NAV
+══════════════════════════════════════ */
+.top-nav{
+  display:none;
+  background:rgba(255,255,255,0.9); backdrop-filter:blur(10px);
+  position:sticky;top:0;z-index:200;
+  border-bottom:1px solid var(--border);
+  box-shadow:0 2px 8px rgba(0,0,0,.06);
+  overflow-x:auto;scrollbar-width:none;
+}
+.top-nav::-webkit-scrollbar{display:none}
+.top-nav-inner{display:flex;width:max-content;min-width:100%}
+.tnav-tab{
+  padding:14px 20px;
+  color:var(--text-l);
+  cursor:pointer;font-size:.8rem;font-weight:600;
+  white-space:nowrap;border-bottom:3px solid transparent;
+  transition:all .2s;display:flex;align-items:center;gap:5px;
+  user-select:none;
+}
+.tnav-tab:hover{color:var(--teal);background:var(--teal-xs)}
+.tnav-tab.active{color:var(--teal);border-bottom-color:var(--teal);background:var(--teal-xs);font-weight:700}
+@media(min-width:768px){.top-nav{display:block}}
+
+/* ══════════════════════════════════════
+   MOBILE BOTTOM NAV
+══════════════════════════════════════ */
+.bottom-nav{
+  display:flex;
+  position:fixed;bottom:0;left:0;right:0;
+  background:rgba(255,255,255,0.95); backdrop-filter:blur(10px);
+  border-top:1px solid var(--border);
+  box-shadow:0 -2px 12px rgba(0,0,0,.08);
+  z-index:300;
+  padding-bottom:var(--safe-bottom);
+  overflow-x:auto;scrollbar-width:none;
+}
+.bottom-nav::-webkit-scrollbar{display:none}
+.bnav-tab{
+  flex:1;min-width:55px;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  padding:8px 4px;
+  color:var(--text-ll);
+  cursor:pointer;font-size:.63rem;font-weight:600;
+  transition:all .2s;user-select:none;
+  border-top:2px solid transparent;
+  gap:3px;
+}
+.bnav-tab .icon{font-size:1.2rem;line-height:1}
+.bnav-tab:hover{color:var(--teal)}
+.bnav-tab.active{color:var(--teal);border-top-color:var(--teal);background:var(--teal-xs)}
+@media(min-width:768px){.bottom-nav{display:none}}
+
+/* ══════════════════════════════════════
+   MAIN CONTENT
+══════════════════════════════════════ */
+.main{max-width:1100px;margin:0 auto;padding:20px 14px 20px}
+@media(min-width:768px){.main{padding:24px 24px 24px}}
+.tab-content{display:none}
+.tab-content.active{display:block !important}
+@keyframes fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+
+/* ══════════════════════════════════════
+   SECTION COMPONENTS
+══════════════════════════════════════ */
+.section-hdr{
+  font-family:'Cinzel',serif;
+  font-size:clamp(1.1rem,3vw,1.35rem);
+  color:var(--teal-d);margin-bottom:18px;
+  display:flex;align-items:center;gap:10px;
+  padding-bottom:10px;
+  border-bottom:2px solid rgba(13,124,138,0.2);
+}
+.section-hdr::after{content:'';flex:1;height:2px;background:linear-gradient(to left,transparent,rgba(13,124,138,0.1));margin-right:4px}
+
+.card{
+  border-radius:var(--r);
+  padding:18px;
+  margin-bottom:16px;
+}
+.card-title{
+  font-family:'Noto Serif Hebrew',serif;
+  font-size:1rem;color:var(--teal-d);
+  margin-bottom:14px;padding-bottom:10px;
+  border-bottom:1px solid rgba(0,0,0,0.05);
+  display:flex;align-items:center;gap:7px;
+  font-weight:700;
+}
+
+.sub-tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap}
+.sub-tab{
+  padding:8px 18px;border-radius:22px;
+  border:1.5px solid rgba(13,124,138,0.3);
+  background:rgba(255,255,255,0.7);color:var(--text-l);
+  font-size:.78rem;font-weight:700;
+  cursor:pointer;font-family:inherit;transition:all .2s;
+}
+.sub-tab.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+.sub-tab:hover:not(.active){background:var(--teal-soft);color:var(--teal);border-color:var(--teal-l)}
+.sub-panel{display:none}
+.sub-panel.active{display:block !important;animation:fadeUp .2s ease}
+
+/* ══════════════════════════════════════
+   EDIT MODE
+══════════════════════════════════════ */
+body:not(.edit-mode) .inp{
+  border-color:transparent;background:transparent;
+  pointer-events:none;cursor:default;
+}
+body:not(.edit-mode) textarea.inp{
+  border-color:transparent;background:transparent;
+  pointer-events:none;resize:none;
+}
+body:not(.edit-mode) select.inp{
+  border-color:transparent;background:transparent;
+  pointer-events:none;-webkit-appearance:none;appearance:none;
+}
+body:not(.edit-mode) [contenteditable]{
+  pointer-events:none;
+  border:none !important;
+  background:transparent !important;
+  box-shadow:none !important;
+  cursor:default;
+}
+body:not(.edit-mode) .edit-only{display:none!important}
+body:not(.edit-mode) .add-form{display:none!important}
+body:not(.edit-mode) .rm-btn{display:none!important}
+body:not(.edit-mode) .del-btn{display:none!important}
+
+/* עיצוב אסתטי לשדות במצב עריכה על רקע התמונה */
+body.edit-mode .inp {
+  border: 1.5px solid rgba(13,124,138,.35) !important; 
+  background: rgba(255,255,255,0.85) !important; 
+  border-radius: 8px !important; /* תוקן ל-8 פיקסלים במקום קפסולה */
+  color: var(--text) !important;
+  transition: all .2s;
+}
+body.edit-mode .inp:focus {
+  border: 1.5px solid var(--teal-l) !important;
+  background: #fff !important; 
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(13,124,138,.15);
+}
+
+body.edit-mode [contenteditable] {
+  border: 1.5px solid rgba(13,124,138,.35) !important;
+  background: rgba(255,255,255,0.85) !important;
+  border-radius: 6px !important; /* תוקן ל-6 פיקסלים מרובע יותר */
+  padding: 4px 8px !important;
+  min-width: 50px;
+  display: block;
+  cursor: text;
+  transition: background .2s;
+}
+body.edit-mode [contenteditable]:focus {
+  outline: none;
+  background: #fff !important;
+  border-color: var(--teal) !important;
+  box-shadow: 0 0 0 3px rgba(13,124,138,.15);
+}
+
+.hotel-hdr .inp,
+.flight-hdr .inp,
+.tr-hdr .inp,
+.tl-hdr .inp {
+  background: rgba(255,255,255,.2) !important;
+  border: 1.5px solid rgba(255,255,255,.4) !important;
+  color: #fff !important;
+}
+.hotel-hdr .inp:focus,
+.flight-hdr .inp:focus,
+.tr-hdr .inp:focus,
+.tl-hdr .inp:focus {
+  background: #fff !important;
+  color: var(--teal-d) !important;
+  border-color: #fff !important;
+  outline: none;
+}
+.hotel-hdr [contenteditable],
+.flight-hdr [contenteditable],
+.tr-hdr [contenteditable],
+.tl-hdr [contenteditable] {
+  border: 1.5px solid rgba(255,255,255,.4) !important;
+  background: rgba(255,255,255,.15) !important;
+}
+.hotel-hdr [contenteditable]:focus,
+.flight-hdr [contenteditable]:focus,
+.tr-hdr [contenteditable]:focus,
+.tl-hdr [contenteditable]:focus {
+  background: #fff !important;
+  color: var(--teal-d) !important;
+  outline: none;
+}
+
+.edit-mode-bar{
+  background:linear-gradient(135deg,#e0f4f7,rgba(255,255,255,0.9));
+  border:1px solid rgba(13,124,138,.3);
+  border-radius:var(--r-s);padding:10px 16px;margin-bottom:16px;
+  font-size:.78rem;color:var(--teal-d);
+  display:none;align-items:center;gap:8px;
+}
+body.edit-mode .edit-mode-bar{display:flex}
+
+
+/* pointer-events explicit fix for edit mode */
+body.edit-mode .inp:not([readonly]) {
+  pointer-events: auto !important;
+  cursor: text;
+}
+body.edit-mode select.inp {
+  cursor: pointer !important;
+  -webkit-appearance: auto !important;
+  appearance: auto !important;
+}
+body.edit-mode .inp[type="date"],
+body.edit-mode .inp[type="number"] {
+  cursor: text;
+}
+
+/* Preserve attr-name left padding for remove button in edit mode */
+body.edit-mode .attr-name[contenteditable] {
+  padding-left: 26px !important;
+}
+body.edit-mode .attr-notes[contenteditable] {
+  display: block;
+  width: 100%;
+}
+/* ══════════════════════════════════════
+   FORM ELEMENTS
+══════════════════════════════════════ */
+.inp{
+  border:1.5px solid rgba(0,0,0,0.1);border-radius: 8px; /* תוקן ל-8 מרובע ונוח */
+  padding:9px 12px;font-family:inherit;
+  font-size:.85rem;color:var(--text);
+  background:rgba(255,255,255,0.8);direction:rtl;
+  transition:border-color .2s,box-shadow .2s;
+  width:100%;
+}
+.inp:focus{outline:none;border-color:var(--teal-l);box-shadow:0 0 0 3px rgba(13,124,138,.1)}
+.inp[readonly]{font-weight:700;color:var(--teal-d) !important;pointer-events:none;border-color:transparent !important; border-style:solid !important; background:transparent !important}
+.inp-ltr{direction:ltr;text-align:left}
+.inp-sm{font-size:.78rem;padding:6px 9px}
+textarea.inp{resize:vertical;min-height:64px;border-radius:8px}
+select.inp{cursor:pointer}
+.form-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.form-g{display:flex;flex-direction:column;gap:5px;flex:1;min-width:120px}
+.form-g label{font-size:.7rem;font-weight:700;color:var(--text-l);user-select:none;letter-spacing:.2px}
+
+/* ══════════════════════════════════════
+   BUTTONS
+══════════════════════════════════════ */
+.btn{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:9px 18px;border:none;border-radius: 8px; /* תוקן ל-8 במקום 20 אליפטי מידי */
+  font-size:.8rem;font-weight:700;cursor:pointer;
+  transition:all .18s;font-family:inherit;
+  min-height:40px;
+}
+.btn-teal{background:var(--teal);color:#fff;box-shadow:0 2px 8px rgba(13,124,138,.25)}
+.btn-teal:hover{background:var(--teal-l);transform:translateY(-1px);box-shadow:0 4px 12px rgba(13,124,138,.35)}
+.btn-gold{background:var(--gold);color:#fff;box-shadow:0 2px 8px rgba(201,148,58,.25)}
+.btn-gold:hover{background:var(--gold-l);transform:translateY(-1px)}
+.btn-red{background:#fee2e2;color:#991b1b;border:1px solid #fecaca}
+.btn-red:hover{background:#fca5a5;transform:translateY(-1px)}
+.btn-ghost{background:transparent;border:1.5px solid rgba(13,124,138,0.4);color:var(--teal-d)}
+.btn-ghost:hover{background:rgba(255,255,255,0.8);color:var(--teal)}
+.btn-sm{padding:6px 13px;font-size:.74rem;min-height:34px}
+.btn-row{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;align-items:center}
+
+/* ══════════════════════════════════════
+   GHOST DELETE BUTTON (כפתור מחיקה נקי)
+══════════════════════════════════════ */
+.del-btn {
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--text-ll) !important;
+  transition: all 0.2s;
+  padding: 4px 8px !important;
+  box-shadow: none !important;
+}
+.del-btn:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  color: #ef4444 !important;
+  border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+/* ══════════════════════════════════════
+   STATUS
+══════════════════════════════════════ */
+.status-sel{
+  border:1.5px solid rgba(0,0,0,0.1);border-radius:22px;
+  padding:5px 12px;font-size:.72rem;font-weight:700;
+  cursor:pointer;font-family:inherit;
+  -webkit-appearance:none;appearance:none;outline:none;
+  transition:all .2s; background:rgba(255,255,255,0.8);
+}
+.s-pending{color:var(--text-l);}
+.s-process{color:#b45309;border-color:rgba(253,230,138,0.8);background:rgba(255,251,235,0.9)}
+.s-done{color:#166534;border-color:rgba(187,247,208,0.8);background:rgba(240,253,244,0.9)}
+
+/* ══════════════════════════════════════
+   FAMILY COLORS SYSTEM
+══════════════════════════════════════ */
+.fam-a-label{color:var(--fam-a);font-weight:700;font-size:.78rem}
+.fam-b-label{color:var(--fam-b);font-weight:700;font-size:.78rem}
+.fam-split{
+  display:grid;grid-template-columns:1fr 1fr;
+  border-top:1px solid rgba(0,0,0,0.05);
+  margin-top:14px;gap:0;
+}
+.fam-col{padding:14px 16px;border-left:1px solid rgba(0,0,0,0.05)}
+.fam-col:last-child{border-left:none}
+
+/* ══════════════════════════════════════
+   TABLES
+══════════════════════════════════════ */
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;border-radius:var(--r-s);border:1px solid rgba(0,0,0,0.08)}
+.dtable{width:100%;border-collapse:collapse;font-size:.82rem;min-width:400px}
+.dtable th{
+  background:var(--teal);color:#fff;
+  padding:10px 12px;text-align:right;
+  font-weight:600;font-size:.74rem;letter-spacing:.3px;
+}
+.dtable th:first-child{border-radius:0 var(--r-s) 0 0}
+.dtable th:last-child{border-radius:var(--r-s) 0 0 0}
+.dtable td{padding:9px 12px;border-bottom:1px solid rgba(0,0,0,0.05);vertical-align:middle;color:var(--text)}
+.dtable tr:last-child td{border-bottom:none}
+.dtable tr:hover{background:rgba(255,255,255,0.5) !important}
+.dtable td[contenteditable]:focus{background:rgba(255,255,255,0.8) !important;border-radius:4px;outline:none}
+
+/* ══════════════════════════════════════
+   STATS & CARDS
+══════════════════════════════════════ */
+.stat-grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:12px;margin-bottom:18px;
+}
+@media(min-width:480px){.stat-grid{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:768px){.stat-grid{grid-template-columns:repeat(6,1fr)}}
+.stat-card{
+  border-radius:var(--r);
+  padding:16px 12px;
+  border-top:3px solid;text-align:center;
+  transition:transform .2s;
+}
+.stat-card:hover{transform:translateY(-2px);}
+.stat-v{
+  font-family:'Cinzel',serif;
+  font-size:clamp(1.4rem,4vw,1.8rem);
+  font-weight:700;color:var(--teal-d);
+  line-height:1.1;
+}
+.stat-l{font-size:.66rem;color:var(--text-l);margin-top:4px;line-height:1.3;font-weight:600}
+
+.fam-total-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+.fam-total-card{border-radius:var(--r);padding:18px;color:#fff;box-shadow:var(--shadow-m)}
+.fam-total-card.a{background:linear-gradient(135deg,var(--teal-d) 0%,var(--teal) 100%)}
+.fam-total-card.b{background:linear-gradient(135deg,var(--gold-d) 0%,var(--gold) 100%)}
+.ftc-label{font-size:.72rem;opacity:.75;margin-bottom:3px;font-weight:600}
+.ftc-name{font-weight:700;font-size:.92rem;margin-bottom:10px;opacity:.9}
+.ftc-amount{font-family:'Cinzel',serif;font-size:1.7rem;color:#fff;font-weight:700;letter-spacing:1px}
+.ftc-per{font-size:.69rem;opacity:.7;margin-top:4px}
+
+.booking-progress{
+  border-radius:var(--r);
+  padding:16px 18px;
+  margin-bottom:18px;
+}
+.bp-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.bp-title{font-weight:700;font-size:.86rem;color:var(--teal-d)}
+.bp-count{font-size:.78rem;color:var(--text-l);font-weight:600}
+.bp-bar{height:9px;background:rgba(0,0,0,0.05);border-radius:5px;overflow:hidden;border:1px solid rgba(0,0,0,0.05)}
+.bp-fill{
+  height:100%;border-radius:5px;
+  background:linear-gradient(to right,var(--teal-d),var(--teal-l));
+  transition:width .6s ease;
+}
+.bp-labels{display:flex;gap:12px;margin-top:8px;flex-wrap:wrap}
+.bp-label{font-size:.66rem;display:flex;align-items:center;gap:5px;color:var(--text-l);font-weight:600}
+
+.weather-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(160px,1fr));
+  gap:12px;margin-bottom:18px;
+}
+.weather-card{
+  border-radius:var(--r);
+  padding:18px 14px;
+  text-align:center;
+  transition:transform .2s;
+}
+.weather-card:hover{transform:translateY(-2px);}
+.wc-city{font-weight:700;font-size:.86rem;color:var(--teal-d);margin-bottom:7px}
+.wc-icon{font-size:2.2rem;margin:4px 0}
+.wc-temp{font-family:'Cinzel',serif;font-size:1.35rem;color:var(--coral);font-weight:700}
+.wc-desc{font-size:.72rem;color:var(--text-l);margin-top:4px;font-weight:500}
+.wc-rain{font-size:.68rem;color:var(--teal);margin-top:6px;
+  background:rgba(13,124,138,0.1);padding:3px 9px;border-radius:10px;display:inline-block;font-weight:600}
+
+/* ══════════════════════════════════════
+   CARDS (FLIGHTS / HOTELS / TRANSFERS)
+══════════════════════════════════════ */
+.flight-card{
+  border-radius:var(--r);
+  margin-bottom:16px;
+  transition:transform .2s;
+  overflow:hidden;
+}
+.flight-card:hover{transform:translateY(-2px)}
+.flight-hdr{
+  background:linear-gradient(135deg,var(--teal-d) 0%,var(--teal) 100%);
+  color:#fff;padding:13px 18px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;
+}
+.flight-route{
+  display:flex;align-items:center;gap:8px;
+  font-family:'Cinzel',serif;font-size:.98rem;color:#fff;
+  font-weight:700;
+}
+.flight-type{font-size:.7rem;opacity:.75;color:#fff;background:rgba(255,255,255,.15);padding:3px 9px;border-radius:12px}
+.flight-body{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:0;
+}
+@media(min-width:600px){.flight-body{grid-template-columns:repeat(4,1fr)}}
+@media(min-width:900px){.flight-body{grid-template-columns:repeat(7,1fr)}}
+.ff{padding:11px 13px;border-left:1px solid rgba(0,0,0,0.05);border-bottom:1px solid rgba(0,0,0,0.05)}
+.ff:last-child{border-bottom:none}
+.ff-lbl{font-size:.63rem;color:var(--text-l);margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px;font-weight:700}
+.ff-val{font-size:.84rem;font-weight:600;color:var(--text);min-width:20px;}
+
+.hotel-card{
+  border-radius:var(--r);
+  margin-bottom:16px;
+  overflow:hidden;
+  transition:transform .2s;
+}
+.hotel-card:hover{transform:translateY(-2px)}
+.hotel-hdr{
+  background:linear-gradient(135deg,var(--teal-d) 0%,var(--teal) 100%);
+  color:#fff;padding:11px 18px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;
+}
+.hotel-hdr-title{
+  font-family:'Cinzel',serif;font-size:.95rem;color:#fff;font-weight:700;
+}
+.hotel-body{
+  padding:16px 18px;
+  background:transparent;
+}
+
+.transfer-card{
+  border-radius:var(--r);
+  margin-bottom:14px;
+  overflow:hidden;
+}
+.tr-hdr{
+  padding:11px 16px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;
+}
+.tr-route{
+  display:flex;align-items:center;gap:8px;
+  font-family:'Cinzel',serif;font-size:.87rem;color:#fff;
+  font-weight:700;
+}
+.tr-body{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:0;
+}
+@media(min-width:600px){.tr-body{grid-template-columns:repeat(4,1fr)}}
+.tr-f{padding:9px 13px;border-left:1px solid rgba(0,0,0,0.05);border-bottom:1px solid rgba(0,0,0,0.05)}
+.tr-lbl{font-size:.62rem;color:var(--text-l);margin-bottom:3px;text-transform:uppercase;letter-spacing:.4px;font-weight:700}
+.tr-val{font-size:.82rem;font-weight:600;color:var(--text);min-width:20px;}
+
+.add-form{
+  border-radius:var(--r-s);
+  padding:16px;margin-top:14px;
+  border-top:3px solid var(--teal-l);
+}
+.add-form-title{font-size:.79rem;font-weight:700;color:var(--teal);margin-bottom:12px;display:flex;align-items:center;gap:5px}
+
+/* ══════════════════════════════════════
+   BUDGET & CURRENCY
+══════════════════════════════════════ */
+.budget-tabs{display:flex;gap:0;margin-bottom:20px;border-radius:var(--r-s);overflow:hidden;box-shadow:var(--shadow-s);border:1px solid rgba(0,0,0,0.1)}
+.btab{
+  flex:1;padding:11px;border:none;
+  font-size:.78rem;font-weight:700;font-family:inherit;
+  cursor:pointer;transition:all .2s;background:rgba(255,255,255,0.7);color:var(--text-l);
+  text-align:center;
+}
+.btab.active.all{background:var(--teal);color:#fff}
+.btab.active.a{background:var(--fam-a);color:#fff}
+.btab.active.b{background:var(--fam-b);color:#fff}
+.bpane{display:none}
+.bpane.active{display:block;animation:fadeUp .2s}
+
+.total-box{
+  border-radius:var(--r);padding:18px 20px;
+  display:flex;align-items:center;justify-content:space-between;
+  box-shadow:var(--shadow-m);margin-bottom:16px;flex-wrap:wrap;gap:10px;
+}
+.total-box.all-box{background:linear-gradient(135deg,var(--teal-d),var(--teal))}
+.total-box.a-box{background:linear-gradient(135deg,var(--teal-d),var(--teal))}
+.total-box.b-box{background:linear-gradient(135deg,var(--gold-d),var(--gold))}
+.total-lbl{font-size:.78rem;opacity:.8;color:#fff;font-weight:600}
+.total-amt{font-family:'Cinzel',serif;font-size:2rem;color:#fff;font-weight:700;letter-spacing:1px}
+.total-per{font-size:.72rem;color:rgba(255,255,255,.7);margin-top:3px}
+
+.budget-bars{margin-bottom:18px}
+.bbar-row{
+  border-radius:var(--r-s);
+  padding:13px 16px;margin-bottom:8px;
+  border:1px solid rgba(0,0,0,0.08); background:rgba(255,255,255,0.5);
+}
+.bbar-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.bbar-cat{font-size:.79rem;font-weight:700;color:var(--text)}
+.bbar-amts{display:flex;gap:10px;font-size:.73rem}
+.bbar-a{color:var(--fam-a);font-weight:700}
+.bbar-b{color:var(--fam-b);font-weight:700}
+.bbar-track{position:relative;height:10px;background:rgba(0,0,0,0.05);border-radius:5px;overflow:hidden}
+.bbar-a-fill{position:absolute;right:0;height:100%;border-radius:5px 0 0 5px;
+  background:var(--fam-a);transition:width .6s ease}
+.bbar-b-fill{position:absolute;height:100%;border-radius:0 5px 5px 0;
+  background:var(--fam-b);transition:left .6s ease, width .6s ease}
+
+.curr-toggle{display:flex;gap:8px;align-items:center;margin-bottom:16px;flex-wrap:wrap}
+.curr-btn{
+  padding:6px 16px;border:1.5px solid rgba(0,0,0,0.15);
+  background:rgba(255,255,255,0.7);border-radius:22px;
+  cursor:pointer;font-size:.76rem;font-weight:700;
+  color:var(--text-l);transition:all .2s;font-family:inherit;
+}
+.curr-btn.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+
+/* ══════════════════════════════════════
+   ATTRACTION CARDS
+══════════════════════════════════════ */
+.attr-grid{
+  display:grid;
+  grid-template-columns:1fr;
+  gap:14px;
+}
+@media(min-width:480px){.attr-grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:900px){.attr-grid{grid-template-columns:repeat(3,1fr)}}
+.attr-card{
+  border-radius:var(--r-s);
+  padding:16px;
+  border-top:3px solid var(--teal);
+  transition:transform .2s;
+  position:relative;
+}
+.attr-card:hover{transform:translateY(-3px);}
+.attr-name{font-weight:700;font-size:.9rem;color:var(--teal-d);margin-bottom:7px;padding-left:24px;line-height:1.4}
+.attr-meta{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px}
+.attr-notes{font-size:.76rem;color:var(--text);border-top:1px solid rgba(0,0,0,0.05);padding-top:8px;margin-top:8px;line-height:1.5; border-radius:8px;}
+.rm-btn{
+  position:absolute;top:10px;left:10px;
+  background:none;border:none;color:var(--text-ll);
+  font-size:.9rem;cursor:pointer;padding:3px;
+  line-height:1;border-radius:4px;transition:color .2s,background .2s;
+}
+.rm-btn:hover{color:var(--coral);background:rgba(224,92,58,0.1)}
+.badge{display:inline-block;padding:3px 9px;border-radius:12px;font-size:.7rem;font-weight:700}
+.b-teal{background:rgba(13,124,138,0.15);color:var(--teal-d)}
+.b-gold{background:rgba(201,148,58,0.15);color:var(--gold-d)}
+
+.area-tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+.area-tab{
+  padding:7px 16px;border-radius:22px;
+  border:1.5px solid rgba(0,0,0,0.1);background:rgba(255,255,255,0.7);
+  color:var(--text-l);font-size:.77rem;font-weight:700;
+  cursor:pointer;font-family:inherit;transition:all .2s;
+}
+.area-tab.active{background:var(--teal);color:#fff;border-color:var(--teal)}
+.area-tab:hover:not(.active){background:var(--teal-soft);color:var(--teal);border-color:var(--teal-l)}
+.area-section{display:none}
+.area-section.active{display:block;animation:fadeUp .2s}
+.area-title{
+  font-family:'Cinzel',serif;font-size:.9rem;color:var(--teal-d);
+  background:rgba(232, 246, 248, 0.8);
+  padding:8px 14px;border-radius:var(--r-s);
+  margin-bottom:12px;letter-spacing:.8px;
+  border-right:4px solid var(--teal);
+  font-weight:700;
+}
+
+/* ══════════════════════════════════════
+   TIMELINE & PACKING
+══════════════════════════════════════ */
+.timeline{position:relative;padding-right:28px}
+.timeline::before{
+  content:'';position:absolute;right:10px;top:0;bottom:0;
+  width:2px;background:linear-gradient(to bottom,var(--teal),var(--gold));
+}
+.tl-item{
+  position:relative;margin-bottom:14px;
+  background:rgba(255,255,255,0.7);border-radius:var(--r);
+  box-shadow:var(--shadow-s);overflow:hidden;
+  border:1px solid rgba(0,0,0,0.08);
+  transition:transform .2s;
+  backdrop-filter: blur(8px);
+}
+.tl-item:hover{transform:translateY(-2px)}
+.tl-item::before{
+  content:'';position:absolute;right:-21px;top:16px;
+  width:12px;height:12px;border-radius:50%;
+  background:var(--teal);border:2px solid #fff;
+  box-shadow:0 0 0 2px var(--teal-l);
+}
+.tl-hdr{
+  background:linear-gradient(135deg,var(--teal-d),var(--teal));
+  color:#fff;padding:9px 14px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:8px;flex-wrap:wrap;
+}
+.tl-daynum{font-family:'Cinzel',serif;font-size:.92rem;color:#fff;font-weight:700}
+.tl-date-inp{
+  background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.25);
+  border-radius:8px;
+  color:#fff;font-size:.74rem;font-family:inherit;
+  padding:3px 7px;width:110px;direction:ltr;
+}
+.tl-date-inp:focus{outline:none;border-color:rgba(255,255,255,.6);background:rgba(255,255,255,.2)}
+.tl-notes{
+  width:100%;border:1.5px solid rgba(0,0,0,0.1);
+  border-radius:8px;padding:9px 11px;
+  font-family:inherit;font-size:.81rem;
+  resize:vertical;min-height:52px;
+  color:var(--text);background:rgba(255,255,255,0.7);direction:rtl;
+}
+.tl-notes:focus{outline:none;border-color:var(--teal-l);box-shadow:0 0 0 3px rgba(13,124,138,.1);background:#fff}
+.tl-loc-sel{
+  background:rgba(255,255,255,.18);
+  border:1px solid rgba(255,255,255,.3);border-radius:8px;
+  color:#fff;font-size:.73rem;font-family:inherit;
+  padding:4px 10px;cursor:pointer;
+}
+
+.pack-grid{
+  display:grid;
+  grid-template-columns:1fr;gap:14px;
+}
+@media(min-width:480px){.pack-grid{grid-template-columns:repeat(2,1fr)}}
+@media(min-width:900px){.pack-grid{grid-template-columns:repeat(3,1fr)}}
+.pack-cat{
+  border-radius:var(--r-s);
+  padding:16px;
+  border-top:3px solid var(--teal);
+  background:rgba(255,255,255,0.6);
+  border-left:1px solid rgba(0,0,0,0.05);
+  border-right:1px solid rgba(0,0,0,0.05);
+  border-bottom:1px solid rgba(0,0,0,0.05);
+  backdrop-filter: blur(10px);
+}
+.pack-cat-title{
+  font-weight:700;color:var(--teal-d);
+  margin-bottom:12px;font-size:.86rem;
+  display:flex;justify-content:space-between;align-items:center;
+}
+.pack-item{
+  display:flex;align-items:center;gap:9px;
+  padding:6px 0;border-bottom:1px solid rgba(0,0,0,0.05);
+  font-size:.8rem;color:var(--text);
+}
+.pack-item:last-of-type{border-bottom:none}
+.pack-item input[type="checkbox"]{width:16px;height:16px;accent-color:var(--teal);cursor:pointer;flex-shrink:0}
+.pack-item label{cursor:pointer;flex:1;line-height:1.3}
+.pack-item input:checked+label{text-decoration:line-through;color:var(--text-ll)}
+.prog-bar{height:6px;background:rgba(0,0,0,0.05);border-radius:3px;margin-top:10px;overflow:hidden}
+.prog-fill{height:100%;background:linear-gradient(to right,var(--teal-d),var(--teal-l));border-radius:3px;transition:width .4s}
+.prog-txt{font-size:.68rem;color:var(--text-ll);margin-top:4px}
+
+/* ══════════════════════════════════════
+   DOCUMENTS & EMERGENCY
+══════════════════════════════════════ */
+.emrg-grid{
+  display:grid;
+  grid-template-columns:1fr;gap:14px;
+}
+@media(min-width:600px){.emrg-grid{grid-template-columns:repeat(2,1fr)}}
+.emrg-card{
+  border-radius:var(--r-s);
+  padding:17px;
+  border-right:4px solid var(--teal);
+  background:rgba(255,255,255,0.6);
+  backdrop-filter:blur(8px);
+}
+.emrg-title{font-weight:700;font-size:.88rem;margin-bottom:12px;color:var(--teal-d);display:flex;align-items:center;gap:6px}
+.emrg-list{list-style:none;font-size:.79rem;color:var(--text);line-height:1.9}
+.emrg-list li::before{content:'◆ ';color:var(--gold);font-size:.6rem;vertical-align:2px}
+
+.tips-grid{
+  display:grid;
+  grid-template-columns:1fr;gap:14px;
+}
+@media(min-width:600px){.tips-grid{grid-template-columns:repeat(2,1fr)}}
+.tip-card{
+  border-radius:var(--r-s);
+  padding:17px;
+  border-right:4px solid var(--teal);
+  background:rgba(255,255,255,0.6);
+  backdrop-filter:blur(8px);
+}
+.tip-title{font-weight:700;margin-bottom:9px;font-size:.86rem;display:flex;align-items:center;gap:6px;color:var(--teal-d)}
+.tip-list{list-style:none;font-size:.79rem;color:var(--text);line-height:1.9}
+.tip-list li::before{content:'◆ ';color:var(--gold);font-size:.6rem;vertical-align:2px}
+
+.flex-between{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.separator{height:1px;background:rgba(0,0,0,0.1);margin:18px 0}
+.section-sub{
+  font-weight:700;color:var(--teal-d);font-size:.93rem;
+  margin:18px 0 13px;padding-bottom:7px;
+  border-bottom:2px solid rgba(0,0,0,0.1);
+  display:flex;align-items:center;gap:7px;
+}
+.notes-ta{
+  width:100%;min-height:90px;
+  border:1.5px solid rgba(0,0,0,0.15);border-radius:8px;
+  padding:10px 13px;font-family:inherit;font-size:.84rem;
+  resize:vertical;background:rgba(255,255,255,0.8);direction:rtl;color:var(--text);
+}
+.notes-ta:focus{outline:none;border-color:var(--teal-l);box-shadow:0 0 0 3px rgba(13,124,138,.15);background:#fff}
+
+/* ══════════════════════════════════════
+   PRINT STYLES
+══════════════════════════════════════ */
+@media print{
+  .top-nav,.bottom-nav,.edit-btn,.add-form,.rm-btn,.del-btn,.btn-row,.edit-mode-bar,.save-bar,.booking-progress{display:none!important}
+  body{background:#fff;padding:0}
+  body::before {display: none;}
+  .tab-content{display:block!important;page-break-before:always}
+  .tab-content:first-of-type{page-break-before:auto}
+  .card, .attr-card, .flight-card, .hotel-card, .transfer-card {box-shadow:none;border:1px solid #ddd; background:#fff!important; backdrop-filter:none!important;}
+  .main{padding:10px}
+}
+
+/* ══════════════════════════════════════
+   MOBILE EXTRAS
+══════════════════════════════════════ */
+@media(max-width:480px){
+  .fam-split{grid-template-columns:1fr}
+  .fam-col{border-left:none;border-top:1px solid rgba(0,0,0,0.05)}
+  .fam-col:first-child{border-top:none}
+
+  /* ── כותרת ראשית ── */
+  .header-inner{
+    padding:14px 12px 12px;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:8px;
+    text-align:center;
+  }
+  .header-text{order:1;width:100%}
+  .header-title{
+    font-size:clamp(1.1rem,6vw,1.4rem);
+    letter-spacing:2px;
+  }
+  .header-sub{font-size:.7rem}
+  .header-fam-badges{order:2;justify-content:center;width:100%;gap:6px}
+  .fam-badge{font-size:.68rem;padding:5px 10px}
+  #header-user-area{order:3;justify-content:center}
+  #editToggleBtn{order:4;margin-top:2px}
+
+  /* ── אנימציה לוטוס במובייל ── */
+  .header-lotus{
+    display:block !important;
+    font-size:90px;
+    left:auto;
+    right:-10px;
+    top:-10px;
+    opacity:.07;
+  }
+
+  /* ── כרטיסים ופאנלים ── */
+  .card{
+    border-radius:var(--r) !important;
+    margin-bottom:12px;
+    padding:14px 12px;
+  }
+  .stat-card{border-radius:var(--r) !important}
+  .fam-total-card{border-radius:var(--r) !important}
+  .flight-card{border-radius:var(--r) !important}
+  .hotel-card{border-radius:var(--r) !important}
+  .transfer-card{border-radius:var(--r) !important}
+  .attr-card{border-radius:var(--r) !important}
+  .pack-cat{border-radius:var(--r) !important}
+  .tip-card{border-radius:var(--r) !important}
+  .emrg-card{border-radius:var(--r) !important}
+  .weather-card{border-radius:var(--r) !important}
+  .tbl-wrap{border-radius:var(--r) !important}
+  .booking-progress{border-radius:var(--r) !important}
+  .bbar-row{border-radius:var(--r) !important}
+  .add-form{border-radius:var(--r) !important}
+  .auth-box{border-radius:var(--r-l) !important}
+  .user-panel{border-radius:var(--r-l) !important}
+  .chat-wrap{border-radius:var(--r) !important}
+  .total-box{border-radius:var(--r) !important}
+
+  /* ── כותרות section ── */
+  .section-hdr{
+    font-size:1rem;
+    justify-content:center;
+    text-align:center;
+  }
+  .section-hdr::after{display:none}
+
+  /* ── ניווט תחתון ── */
+  .bottom-nav{justify-content:flex-start}
+  .bnav-tab{min-width:52px;font-size:.58rem;padding:7px 3px}
+  .bnav-tab .icon{font-size:1.1rem}
+
+  /* ── טבלאות ── */
+  .fam-total-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .ftc-amount{font-size:1.3rem}
+
+  /* ── ספירה לאחור ── */
+  #countdown-wrap{padding:14px 16px}
+  #cd-main{font-size:1.4rem}
+  #cd-days,#cd-hrs,#cd-mins{font-size:1.4rem}
+
+  /* ── טפסים ── */
+  .form-row{flex-direction:column;gap:8px}
+  .form-g{min-width:unset;width:100%}
+
+  /* ── אזור משתמש בheader ── */
+  .header-inner > div:last-child{
+    display:flex;flex-wrap:wrap;justify-content:center;gap:6px;width:100%
+  }
+
+  /* ── main padding ── */
+  .main{padding:12px 10px 12px}
+
+  /* ── sub tabs ── */
+  .sub-tabs{gap:5px}
+  .sub-tab{padding:6px 12px;font-size:.74rem}
+  .area-tabs{gap:5px}
+  .area-tab{padding:6px 12px;font-size:.74rem}
+}
+
+/* ══════════════════════════════════════
+   SAVE / SHARE BUTTON (Glassmorphism)
+══════════════════════════════════════ */
+.save-bar{
+  position:fixed;bottom:calc(var(--bottom-nav-h) + var(--safe-bottom));right:0;left:0;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 24px;z-index:250;gap:12px;flex-wrap:wrap;
+  border-top:none;
+}
+@media(min-width:768px){
+  .save-bar{bottom:0;position:sticky;top:auto}
+}
+.save-bar-left{display:flex;align-items:center;gap:10px;flex:1}
+.save-indicator{
+  font-size:.75rem;color:var(--text-l);
+  display:flex;align-items:center;gap:6px;white-space:nowrap;font-weight:700;
+}
+.save-indicator.saved{color:#16a34a}
+.save-indicator.unsaved{color:#d97706}
+.save-dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex-shrink:0}
+.btn-save{
+  background:var(--teal);
+  color:#fff;border:none;border-radius:8px; /* תוקן ל-8 במקום קפסולה ארוכה */
+  padding:10px 24px;font-size:.85rem;font-weight:800;cursor:pointer;
+  font-family:inherit;display:flex;align-items:center;gap:8px;
+  transition:all .2s;white-space:nowrap;min-height:44px;
+  box-shadow:0 4px 12px rgba(13,124,138,.3);
+}
+.btn-save:hover{background:var(--teal-l);transform:translateY(-2px);box-shadow:0 6px 16px rgba(13,124,138,.4)}
+
+/* ══════════════════════════════════════
+   AVATAR SELECTION (UI FIX)
+══════════════════════════════════════ */
+.av-choice {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px; border-radius: 12px; cursor: pointer;
+  border: 2px solid transparent; background: rgba(255,255,255,0.6);
+  transition: all 0.2s ease;
+}
+.av-choice:hover { background: #fff; box-shadow: var(--shadow-s); }
+/* התיקון שגורם לתכלת לעבוד! */
+.av-choice.selected, .av-choice.av-sel {
+  border-color: var(--teal) !important;
+  background: #fff !important;
+  box-shadow: 0 4px 12px rgba(13,124,138,0.2) !important;
+}
+.av-img {
+  width: 54px; height: 54px; border-radius: 50%; object-fit: cover;
+  border: 2px solid #fff; box-shadow: var(--shadow-s);
+}
+.av-lbl {
+  font-size: .65rem; color: var(--text-l); font-weight: 700; text-align: center;
+}
+
+
+/* ══════════════════════════════════════
+   AUTH OVERLAY - FULL REDESIGN
+══════════════════════════════════════ */
+.auth-box {
+  background: rgba(255,255,255,0.97);
+  border-radius: 24px;
+  width: 100%;
+  max-width: 400px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 80px rgba(0,0,0,0.3);
+  animation: panelIn .3s cubic-bezier(.34,1.56,.64,1);
+}
+.auth-header {
+  background: linear-gradient(135deg, #064a54 0%, #0d7c8a 55%, #12a3b4 100%);
+  padding: 32px 24px 24px;
+  text-align: center;
+  border-radius: 24px 24px 0 0;
+  position: relative;
+  overflow: hidden;
+}
+.auth-header::before {
+  content: '🌴';
+  position: absolute;
+  font-size: 120px;
+  opacity: .07;
+  bottom: -20px;
+  left: -10px;
+  line-height: 1;
+}
+.auth-header-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 3px;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.3);
+  margin-bottom: 4px;
+}
+.auth-header-sub {
+  font-size: .78rem;
+  color: rgba(255,255,255,.65);
+  font-family: 'Noto Serif Hebrew', serif;
+  letter-spacing: .5px;
+}
+.auth-tabs {
+  display: flex;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+  background: #fafafa;
+}
+.auth-tab {
+  flex: 1;
+  padding: 14px;
+  border: none;
+  background: transparent;
+  font-size: .83rem;
+  font-weight: 700;
+  color: var(--text-l);
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .2s;
+  border-bottom: 3px solid transparent;
+  letter-spacing: .3px;
+}
+.auth-tab.active {
+  color: var(--teal);
+  border-bottom-color: var(--teal);
+  background: #fff;
+}
+.auth-panel { padding: 24px 24px 20px; }
+.auth-inp {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1.5px solid rgba(0,0,0,0.12);
+  border-radius: 12px;
+  font-size: .88rem;
+  font-family: inherit;
+  color: var(--text);
+  background: #fafafa;
+  transition: all .2s;
+  text-align: center;
+}
+.auth-inp:focus {
+  outline: none;
+  border-color: var(--teal-l);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(13,124,138,.12);
+}
+.auth-btn {
+  width: 100%;
+  padding: 13px 20px;
+  border: none;
+  border-radius: 12px;
+  font-size: .88rem;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .2s;
+  background: var(--teal);
+  color: #fff;
+  box-shadow: 0 4px 12px rgba(13,124,138,.3);
+  align-items: center;
+  gap: 8px;
+  min-height: 46px;
+}
+.auth-btn:hover { background: var(--teal-l); transform: translateY(-1px); box-shadow: 0 6px 16px rgba(13,124,138,.4); }
+.auth-btn-google {
+  background: #fff;
+  color: #3c4043;
+  border: 1.5px solid rgba(0,0,0,0.15) !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,.1);
+}
+.auth-btn-google:hover { background: #f8f9fa; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+.auth-btn-guest {
+  background: rgba(201,148,58,.12);
+  color: var(--gold-d);
+  border: 1.5px solid rgba(201,148,58,.3) !important;
+  box-shadow: none;
+}
+.auth-btn-guest:hover { background: rgba(201,148,58,.2); box-shadow: 0 2px 8px rgba(201,148,58,.2); }
+.auth-err {
+  color: #dc2626;
+  font-size: .78rem;
+  font-weight: 600;
+  text-align: center;
+  min-height: 18px;
+}
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-ll);
+  font-size: .74rem;
+  font-weight: 600;
+}
+.auth-divider::before, .auth-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: rgba(0,0,0,0.1);
+}
+.av-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+/* ══════════════════════════════════════
+   EMOJI AVATAR CIRCLE
+══════════════════════════════════════ */
+.av-emoji-circle {
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+  border: 2px solid rgba(255,255,255,0.6);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  margin: 0 auto 4px;
+}
+.av-choice .av-img { display: none; } /* hide old img if any */
+.av-choice { padding: 8px 6px; }
+.av-choice.selected .av-emoji-circle,
+.av-choice.av-sel .av-emoji-circle {
+  border: 3px solid var(--teal) !important;
+  box-shadow: 0 4px 14px rgba(13,124,138,0.3) !important;
+}
+
+/* ══════════════════════════════════════
+   USER PANEL MODAL (פרופיל משתמש)
+══════════════════════════════════════ */
+#user-panel-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 2000;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.user-panel {
+  background: #fff;
+  border-radius: 20px;
+  width: 100%;
+  max-width: 420px;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+  animation: panelIn .25s ease;
+}
+@keyframes panelIn {
+  from { opacity:0; transform:translateY(20px) scale(0.96); }
+  to   { opacity:1; transform:translateY(0) scale(1); }
+}
+.user-panel-hdr {
+  background: linear-gradient(135deg, var(--teal-d), var(--teal));
+  color: #fff;
+  padding: 18px 20px;
+  border-radius: 20px 20px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.user-panel-title {
+  font-family: 'Cinzel', serif;
+  font-size: 1rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+/* ══════════════════════════════════════
+   AUTH OVERLAY
+══════════════════════════════════════ */
+#auth-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 3000;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+</style>
+<script>
+// Proxies for Firebase module functions - available immediately before module loads
+(function(){
+  function proxy(name){
+    return function(){
+      var a=arguments;
+      if(window['__'+name]) return window['__'+name].apply(null,a);
+      setTimeout(function(){ if(window['__'+name]) window['__'+name].apply(null,a); },800);
+    };
+  }
+  var fns=['fbLogin','fbRegister','fbGoogleLogin','fbGuestLogin','fbLogout',
+           'sendChatMsg','chatKeydown','castVote','toggleEditPerm',
+           'openUserPanel','closeUserPanel','updateProfileName','changeAvatar',
+           'saveToFirestore','loadFromFirestore'];
+  fns.forEach(function(n){ window[n]=proxy(n); });
+  
+  // switchAuthTab works immediately without Firebase
+  window.switchAuthTab=function(tab){
+    document.querySelectorAll('.auth-tab').forEach(function(t){t.classList.remove('active');});
+    document.querySelectorAll('.auth-panel').forEach(function(p){p.style.display='none';});
+    var t=document.getElementById('auth-tab-'+tab);
+    var p=document.getElementById('auth-panel-'+tab);
+    if(t)t.classList.add('active');
+    if(p)p.style.display='block';
+  };
+  window.showAuthOverlay=function(){var e=document.getElementById('auth-overlay');if(e)e.style.display='flex';};
+  window.hideAuthOverlay=function(){var e=document.getElementById('auth-overlay');if(e)e.style.display='none';};
+})();
+</script>
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-pattern"></div>
+  <div class="header-lotus">🪷</div>
+  <div class="header-inner">
+    <div class="header-fam-badges">
+      <button class="fam-badge fam-badge-a" onclick="editFam(1)">✏️ <span id="h-fam-a">משפחה א׳</span></button>
+      <button class="fam-badge fam-badge-b" onclick="editFam(2)">✏️ <span id="h-fam-b">משפחה ב׳</span></button>
+    </div>
+    <div class="header-text">
+      <div class="header-title">🌴 THAILAND 2026 🌴</div>
+      <div class="header-sub">תכנון הטיול המשפחתי | Family Trip Planner</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+      <div id="header-user-area"></div>
+      <button class="edit-btn" onclick="toggleEdit()" id="editToggleBtn">👁️ תצוגה</button>
+    </div>
+  </div>
+  <div class="header-border"></div>
+</header>
+
+<nav class="top-nav">
+  <div class="top-nav-inner">
+    <div class="tnav-tab active" onclick="gotoTab('overview')" data-tab="overview">🏠 סקירה</div>
+    <div class="tnav-tab" onclick="gotoTab('flights')" data-tab="flights">✈️ טיסות</div>
+    <div class="tnav-tab" onclick="gotoTab('hotels')" data-tab="hotels">🏨 לינה והעברות</div>
+    <div class="tnav-tab" onclick="gotoTab('attractions')" data-tab="attractions">🗺️ אטרקציות</div>
+    <div class="tnav-tab" onclick="gotoTab('planning')" data-tab="planning">📅 תכנון</div>
+    <div class="tnav-tab" onclick="gotoTab('budget')" data-tab="budget">💰 תקציב</div>
+  </div>
+</nav>
+
+<main class="main">
+
+<div id="tab-overview" class="tab-content active" style="display:block">
+  <div class="section-hdr">🏠 סקירה כללית</div>
+  <div class="edit-mode-bar">✏️ מצב עריכה פעיל – הרקעים הלבנים מראים לך היכן ניתן לערוך. | לחץ "תצוגה" בכותרת למראה נקי.</div>
+
+  <div id="countdown-wrap" class="card" style="background:linear-gradient(135deg,var(--teal-d),var(--teal)) !important;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;border:none">
+    <div>
+      <div style="font-size:.72rem;color:rgba(255,255,255,.65);font-weight:600;margin-bottom:6px;letter-spacing:.5px">✈️ יציאה לתאילנד 2026</div>
+      <div id="cd-main" style="font-family:'Cinzel',serif;font-size:clamp(1.5rem,5vw,2.2rem);color:#fff;font-weight:700;line-height:1.1">—</div>
+      <div id="cd-sub" style="font-size:.75rem;color:rgba(255,255,255,.65);margin-top:5px">הכנס תאריך יציאה למטה</div>
+    </div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap">
+      <div style="text-align:center;background:rgba(255,255,255,.12);border-radius:12px;padding:10px 16px">
+        <div id="cd-days" style="font-family:'Cinzel',serif;font-size:1.8rem;color:#fff;font-weight:700;line-height:1">—</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.65);margin-top:3px">ימים</div>
+      </div>
+      <div style="text-align:center;background:rgba(255,255,255,.12);border-radius:12px;padding:10px 16px">
+        <div id="cd-hrs" style="font-family:'Cinzel',serif;font-size:1.8rem;color:#fff;font-weight:700;line-height:1">—</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.65);margin-top:3px">שעות</div>
+      </div>
+      <div style="text-align:center;background:rgba(255,255,255,.12);border-radius:12px;padding:10px 16px">
+        <div id="cd-mins" style="font-family:'Cinzel',serif;font-size:1.8rem;color:#fff;font-weight:700;line-height:1">—</div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.65);margin-top:3px">דקות</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat-card" style="border-color:var(--teal)"><div class="stat-v" id="ov-days">14</div><div class="stat-l">ימי טיול</div></div>
+    <div class="stat-card" style="border-color:var(--gold)"><div class="stat-v" id="ov-hotels">1</div><div class="stat-l">מלונות</div></div>
+    <div class="stat-card" style="border-color:var(--coral)"><div class="stat-v" id="ov-attr">0</div><div class="stat-l">אטרקציות</div></div>
+    <div class="stat-card" style="border-color:#22c55e"><div class="stat-v" id="ov-conf">0</div><div class="stat-l">הוזמן ✅</div></div>
+    <div class="stat-card" style="border-color:#f59e0b"><div class="stat-v" id="ov-pending">0</div><div class="stat-l">ממתין ⏳</div></div>
+    <div class="stat-card" style="border-color:#8b5cf6"><div class="stat-v" id="ov-pax">4</div><div class="stat-l">נוסעים</div></div>
+  </div>
+
+  <div class="fam-total-grid">
+    <div class="fam-total-card a" style="background:linear-gradient(135deg,var(--teal-d) 0%,var(--teal) 100%) !important">
+      <div class="ftc-label">עלות טיול</div>
+      <div class="ftc-name" id="ftc-name-a">משפחה א׳</div>
+      <div class="ftc-amount" id="ftc-a">₪0</div>
+      <div class="ftc-per" id="ftc-a-per">לאדם: ₪0</div>
+    </div>
+    <div class="fam-total-card b" style="background:linear-gradient(135deg,var(--gold-d) 0%,var(--gold) 100%) !important">
+      <div class="ftc-label">עלות טיול</div>
+      <div class="ftc-name" id="ftc-name-b">משפחה ב׳</div>
+      <div class="ftc-amount" id="ftc-b">₪0</div>
+      <div class="ftc-per" id="ftc-b-per">לאדם: ₪0</div>
+    </div>
+  </div>
+
+  <div class="booking-progress">
+    <div class="bp-header">
+      <span class="bp-title">📊 סטטוס הזמנות</span>
+      <span class="bp-count" id="bp-count">0 / 0 אושרו</span>
+    </div>
+    <div class="bp-bar"><div class="bp-fill" id="bp-fill" style="width:0%"></div></div>
+    <div class="bp-labels">
+      <span class="bp-label"><span style="width:10px;height:10px;border-radius:50%;background:#d1fae5;display:inline-block"></span> <span id="bp-done-n">0</span> מאושרים</span>
+      <span class="bp-label"><span style="width:10px;height:10px;border-radius:50%;background:#fef3c7;display:inline-block"></span> <span id="bp-proc-n">0</span> בתהליך</span>
+      <span class="bp-label"><span style="width:10px;height:10px;border-radius:50%;background:#f3f4f6;display:inline-block"></span> <span id="bp-pend-n">0</span> ממתינים</span>
+    </div>
+  </div>
+
+  <div class="card edit-only" id="trip-details-card">
+    <div class="card-title">🌍 פרטי הטיול</div>
+    <div class="form-row">
+      <div class="form-g"><label>תאריך יציאה</label><input type="date" class="inp" id="depDate" onchange="calcDays();startCountdown();dQ()"></div>
+      <div class="form-g"><label>תאריך חזרה</label><input type="date" class="inp" id="retDate" onchange="calcDays();dQ()"></div>
+      <div class="form-g"><label>סה״כ נוסעים</label><input type="number" class="inp" id="numTrav" value="4" min="1" oninput="updatePax();dQ()"></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px">
+      <div style="background:rgba(224,244,247,0.5);border-radius:8px;padding:12px;border-right:3px solid var(--fam-a)">
+        <div class="fam-a-label" style="margin-bottom:8px" id="fam-a-details-label">משפחה א׳</div>
+        <div class="form-g" style="margin-bottom:8px"><label>שם משפחה</label><input type="text" class="inp" id="fam1Name" placeholder="שם המשפחה" oninput="updateFamNames()"></div>
+        <div class="form-g"><label>מספר נוסעים</label><input type="number" class="inp" id="fam1Pax" value="2" min="1" oninput="updatePax();dQ()"></div>
+      </div>
+      <div style="background:rgba(253,243,227,0.5);border-radius:8px;padding:12px;border-right:3px solid var(--fam-b)">
+        <div class="fam-b-label" style="margin-bottom:8px" id="fam-b-details-label">משפחה ב׳</div>
+        <div class="form-g" style="margin-bottom:8px"><label>שם משפחה</label><input type="text" class="inp" id="fam2Name" placeholder="שם המשפחה" oninput="updateFamNames()"></div>
+        <div class="form-g"><label>מספר נוסעים</label><input type="number" class="inp" id="fam2Pax" value="2" min="1" oninput="updatePax();dQ()"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="justify-content:space-between">
+      <span>🌤️ מזג אוויר עכשווי – תאילנד</span>
+      <button class="btn btn-ghost btn-sm" onclick="fetchWeather()" id="weather-refresh-btn" style="font-size:.7rem;padding:4px 10px">🔄 רענן</button>
+    </div>
+    <div id="weather-live-grid" class="weather-grid">
+      <div class="weather-card" style="grid-column:1/-1;text-align:center;padding:24px;color:var(--text-ll)">
+        <div style="font-size:1.5rem;margin-bottom:8px">🌐</div>
+        <div style="font-size:.82rem">לחץ "רענן" לקבלת מזג אוויר בזמן אמת</div>
+      </div>
+    </div>
+    <div style="font-size:.68rem;color:var(--text-ll);margin-top:6px;text-align:left">Open-Meteo API · מתעדכן בלחיצה</div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📝 הערות משותפות</div>
+    <textarea class="notes-ta inp" id="sharedNotes" placeholder="החלטות משותפות, שאלות פתוחות, דברים לזכור..." oninput="dS()"></textarea>
+  </div>
+</div>
+
+<div id="tab-flights" class="tab-content">
+  <div class="section-hdr">✈️ טיסות</div>
+  <div class="sub-tabs">
+    <button class="sub-tab active" onclick="switchSub(this,'flights','intl')">🌍 בינלאומיות</button>
+    <button class="sub-tab" onclick="switchSub(this,'flights','dom')">🛩️ פנימיות</button>
+  </div>
+
+  <div id="sp-flights-intl" class="sub-panel active" style="display:block">
+    <div id="intl-flights-list">
+      <div class="flight-card" id="fi1">
+        <div class="flight-hdr">
+          <div class="flight-route"><span contenteditable="true" oninput="dS()">TLV</span><span style="opacity:.4;margin:0 4px">→</span><span contenteditable="true" oninput="dS()">BKK</span></div>
+          <span class="flight-type">הלוך | Outbound</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select>
+            <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.flight-card').remove();dQ()">🗑️</button>
+          </div>
+        </div>
+        <div class="flight-body">
+          <div class="ff"><div class="ff-lbl">חברה</div><div class="ff-val" contenteditable="true" oninput="dS()">EL AL</div></div>
+          <div class="ff"><div class="ff-lbl">מס׳ טיסה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">תאריך</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">המראה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">נחיתה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">Conf #</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">הערות</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+        </div>
+        <div class="fam-split">
+          <div class="fam-col">
+            <div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div>
+            <div class="form-row" style="margin:0;gap:8px">
+              <div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-a-pp" placeholder="0" oninput="dQ()"></div>
+              <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div>
+            </div>
+          </div>
+          <div class="fam-col">
+            <div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div>
+            <div class="form-row" style="margin:0;gap:8px">
+              <div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-b-pp" placeholder="0" oninput="dQ()"></div>
+              <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="flight-card" id="fi2">
+        <div class="flight-hdr">
+          <div class="flight-route"><span contenteditable="true" oninput="dS()">BKK</span><span style="opacity:.4;margin:0 4px">→</span><span contenteditable="true" oninput="dS()">TLV</span></div>
+          <span class="flight-type">חזור | Return</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select>
+            <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.flight-card').remove();dQ()">🗑️</button>
+          </div>
+        </div>
+        <div class="flight-body">
+          <div class="ff"><div class="ff-lbl">חברה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">מס׳ טיסה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">תאריך</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">המראה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">נחיתה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">Conf #</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">הערות</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+        </div>
+        <div class="fam-split">
+          <div class="fam-col"><div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div><div class="form-row" style="margin:0;gap:8px"><div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-a-pp" placeholder="0" oninput="dQ()"></div><div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div></div></div>
+          <div class="fam-col"><div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div><div class="form-row" style="margin:0;gap:8px"><div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-b-pp" placeholder="0" oninput="dQ()"></div><div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="add-form">
+      <div class="add-form-title">➕ הוסף טיסה בינלאומית</div>
+      <div class="form-row">
+        <div class="form-g"><label>מוצא</label><input type="text" class="inp" id="nif-from" placeholder="TLV"></div>
+        <div class="form-g"><label>יעד</label><input type="text" class="inp" id="nif-to" placeholder="BKK"></div>
+        <div class="form-g"><label>סוג</label><input type="text" class="inp" id="nif-type" placeholder="הלוך / חזור"></div>
+        <div class="form-g"><label>חברה</label><input type="text" class="inp" id="nif-airline" placeholder=""></div>
+      </div>
+      <button class="btn btn-teal" onclick="addIntlFlight()">✈️ הוסף</button>
+    </div>
+  </div>
+
+  <div id="sp-flights-dom" class="sub-panel">
+    <div class="card" style="background:rgba(224,92,58,.04);border-color:rgba(224,92,58,.2);border-right:4px solid var(--coral);margin-bottom:14px">
+      <div style="font-size:.8rem;color:#7c2d12;line-height:1.7">🛩️ <strong>טיסות פנים בתאילנד</strong> — Bangkok Airways היא חברת האוויר העיקרית לקוסמוי (USM). לפטאייה ניתן לנחות ב-U-Tapao (UTP) או לנסוע מבנגקוק (3 שעות).</div>
+    </div>
+    <div id="dom-flights-list">
+      <div class="flight-card" style="border-right:4px solid var(--coral)" data-ftype="dom" id="fd1">
+        <div class="flight-hdr" style="background:linear-gradient(to left,#7c2d12,var(--coral)) !important">
+          <div class="flight-route"><span contenteditable="true" oninput="dS()">BKK</span><span style="opacity:.4;margin:0 4px">→</span><span contenteditable="true" oninput="dS()">USM (Samui)</span></div>
+          <span class="flight-type">🛩️ פנים | Domestic</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select>
+            <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.flight-card').remove();dQ()">🗑️</button>
+          </div>
+        </div>
+        <div class="flight-body">
+          <div class="ff"><div class="ff-lbl">חברה</div><div class="ff-val" contenteditable="true" oninput="dS()">Bangkok Airways</div></div>
+          <div class="ff"><div class="ff-lbl">מס׳ טיסה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">תאריך</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">המראה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">נחיתה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">Conf #</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="ff"><div class="ff-lbl">הערות</div><div class="ff-val" contenteditable="true" oninput="dS()">~50 דק׳</div></div>
+        </div>
+        <div class="fam-split">
+          <div class="fam-col"><div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div><div class="form-row" style="margin:0;gap:8px"><div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-a-pp" placeholder="0" oninput="dQ()"></div><div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div></div></div>
+          <div class="fam-col"><div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div><div class="form-row" style="margin:0;gap:8px"><div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-b-pp" placeholder="0" oninput="dQ()"></div><div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="add-form">
+      <div class="add-form-title">➕ הוסף טיסה פנימית</div>
+      <div class="form-row">
+        <div class="form-g"><label>מוצא</label><input type="text" class="inp" id="ndf-from" placeholder="BKK"></div>
+        <div class="form-g"><label>יעד</label><input type="text" class="inp" id="ndf-to" placeholder="USM"></div>
+        <div class="form-g"><label>חברה</label><input type="text" class="inp" id="ndf-airline" placeholder="Bangkok Airways"></div>
+      </div>
+      <button class="btn btn-teal" onclick="addDomFlight()">🛩️ הוסף</button>
+    </div>
+  </div>
+</div>
+
+<div id="tab-hotels" class="tab-content">
+  <div class="section-hdr">🏨 לינה והעברות</div>
+  <div class="sub-tabs">
+    <button class="sub-tab active" onclick="switchSub(this,'hotels','hotels')">🏨 מלונות</button>
+    <button class="sub-tab" onclick="switchSub(this,'hotels','transfers')">🚌 העברות</button>
+  </div>
+
+  <div id="sp-hotels-hotels" class="sub-panel active" style="display:block">
+    <div id="hotels-list">
+      <div class="hotel-card" id="h-bkk">
+        <div class="hotel-hdr">
+          <div class="hotel-hdr-title" contenteditable="true" oninput="dS()">🏙️ בנגקוק | Bangkok</div>
+          <div style="display:flex;gap:6px;align-items:center">
+            <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select>
+            <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.hotel-card').remove();dQ();countHotels()">🗑️</button>
+          </div>
+        </div>
+        <div class="hotel-body">
+          <div class="form-row">
+            <div class="form-g" style="flex:2"><label>שם המלון</label><input type="text" class="inp" placeholder="שם המלון..." onchange="dS()"></div>
+            <div class="form-g"><label>דירוג</label><input type="text" class="inp" placeholder="⭐⭐⭐⭐" onchange="dS()"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-g"><label>צ׳ק-אין</label><input type="date" class="inp" onchange="dS()"></div>
+            <div class="form-g"><label>צ׳ק-אאוט</label><input type="date" class="inp" onchange="dS()"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-g" style="flex:1">
+              <label>🔗 קישור לתמונות / אתר</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="url" class="inp inp-ltr" id="h-bkk-link" placeholder="https://booking.com/..." oninput="updateHotelLink('h-bkk');dS()">
+                <a id="h-bkk-link-btn" href="#" target="_blank" style="display:none;padding:8px 12px;background:var(--teal);color:#fff;border-radius:8px;font-size:.75rem;white-space:nowrap;text-decoration:none;flex-shrink:0">🌐 פתח</a>
+              </div>
+            </div>
+          </div>
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-g">
+              <label>📍 מיקום למפה</label>
+              <div style="display:flex;gap:6px;align-items:center">
+                <input type="text" class="inp inp-ltr" id="h-bkk-loc" placeholder="שם המלון, Bangkok" onchange="dS()">
+                <button onclick="openMap('h-bkk-loc')" class="btn btn-ghost btn-sm" style="white-space:nowrap;flex-shrink:0">🗺️ מפה</button>
+              </div>
+            </div>
+          </div>
+          <div class="fam-split" style="margin:14px -18px -16px;border-top:1px solid rgba(0,0,0,0.06)">
+            <div class="fam-col">
+              <div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div>
+              <div class="form-row" style="margin:0;gap:8px">
+                <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-a-price" placeholder="0" oninput="calcHotel('h-bkk');dQ()"></div>
+                <div class="form-g"><label>לילות</label><input type="number" class="inp h-a-nights" value="4" placeholder="4" oninput="calcHotel('h-bkk');dQ()"></div>
+                <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="h-bkk-a-tot" value="₪0"></div>
+              </div>
+            </div>
+            <div class="fam-col">
+              <div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div>
+              <div class="form-row" style="margin:0;gap:8px">
+                <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-b-price" placeholder="0" oninput="calcHotel('h-bkk');dQ()"></div>
+                <div class="form-g"><label>לילות</label><input type="number" class="inp h-b-nights" value="4" placeholder="4" oninput="calcHotel('h-bkk');dQ()"></div>
+                <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="h-bkk-b-tot" value="₪0"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="add-form">
+      <div class="add-form-title">➕ הוסף מלון</div>
+      <div class="form-row">
+        <div class="form-g" style="flex:2"><label>שם</label><input type="text" class="inp" id="nh-name" placeholder="שם המלון"></div>
+        <div class="form-g"><label>עיר</label><input type="text" class="inp" id="nh-city" placeholder="בנגקוק / קוסמוי..."></div>
+      </div>
+      <button class="btn btn-teal" onclick="addHotel()">🏨 הוסף מלון</button>
+    </div>
+  </div>
+
+  <div id="sp-hotels-transfers" class="sub-panel">
+    <div class="card" style="background:rgba(13,92,99,.04);border-color:rgba(13,92,99,.2);margin-bottom:14px">
+      <div style="font-size:.78rem;color:var(--teal-d);line-height:1.7">💡 <strong>טיסות פנים</strong> (BKK↔Samui, Samui↔Pattaya) נמצאות בלשונית <strong>✈️ טיסות → פנימיות</strong>. כאן: העברות קרקעיות בלבד.</div>
+    </div>
+    <div class="section-sub">🚖 העברות שדה תעופה</div>
+    <div id="airport-transfers">
+      <div class="transfer-card">
+        <div class="tr-hdr" style="background:linear-gradient(to left,#1a3a1a,#166534) !important">
+          <div class="tr-route"><span contenteditable="true" oninput="dS()">BKK Airport</span><span style="opacity:.4;margin:0 6px">→</span><span contenteditable="true" oninput="dS()">מלון בנגקוק</span></div>
+          <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select>
+          <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.transfer-card').remove();dQ()">🗑️</button>
+        </div>
+        <div class="tr-body">
+          <div class="tr-f"><div class="tr-lbl">סוג</div><div class="tr-val" contenteditable="true" oninput="dS()">Grab / מונית</div></div>
+          <div class="tr-f"><div class="tr-lbl">תאריך</div><div class="tr-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="tr-f"><div class="tr-lbl">שעה</div><div class="tr-val" contenteditable="true" oninput="dS()"></div></div>
+          <div class="tr-f"><div class="tr-lbl">עלות (₪)</div><div class="tr-val cost-val" contenteditable="true" oninput="dQ()">0</div></div>
+          <div class="tr-f"><div class="tr-lbl">הערות</div><div class="tr-val" contenteditable="true" oninput="dS()">~45 דק׳. Grab מומלץ</div></div>
+        </div>
+      </div>
+    </div>
+    <div class="add-form">
+      <div class="add-form-title">➕ הוסף העברה</div>
+      <div class="form-row">
+        <div class="form-g"><label>מ-</label><input type="text" class="inp" id="nt-from" placeholder="מ..."></div>
+        <div class="form-g"><label>אל-</label><input type="text" class="inp" id="nt-to" placeholder="אל..."></div>
+        <div class="form-g"><label>סוג</label><select class="inp" id="nt-type"><option value="taxi">🚖 מונית/Grab</option><option value="bus">🚌 אוטובוס</option><option value="ferry">⛴️ מעבורת</option></select></div>
+      </div>
+      <button class="btn btn-teal" onclick="addTransfer()">🚌 הוסף</button>
+    </div>
+  </div>
+</div>
+
+<div id="tab-attractions" class="tab-content">
+  <div class="section-hdr">🗺️ אטרקציות</div>
+  <div class="area-tabs">
+    <button class="area-tab active" onclick="switchArea(event,'bangkok')">🏙️ בנגקוק</button>
+    <button class="area-tab" onclick="switchArea(event,'samui')">🌴 קוסמוי</button>
+    <button class="area-tab" onclick="switchArea(event,'pattaya')">🎡 פטאייה</button>
+    <button class="area-tab" onclick="switchArea(event,'all')">🌏 הכל</button>
+  </div>
+  <div id="area-bangkok" class="area-section active"><div class="attr-grid" id="ag-bangkok"></div><div class="add-form"><div class="add-form-title">➕ הוסף – בנגקוק</div><div class="form-row"><div class="form-g" style="flex:2"><label>שם</label><input type="text" class="inp" id="na-bangkok-n"></div><div class="form-g"><label>עלות (₪)</label><input type="number" class="inp" id="na-bangkok-c"></div><div class="form-g"><label>משך</label><input type="text" class="inp" id="na-bangkok-d" placeholder="2-3 שעות"></div></div><input type="text" class="inp" id="na-bangkok-notes" placeholder="הערות..." style="margin-bottom:8px"><button class="btn btn-teal" onclick="addAttr('bangkok')">+ הוסף</button></div></div>
+  <div id="area-samui" class="area-section"><div class="attr-grid" id="ag-samui"></div><div class="add-form"><div class="add-form-title">➕ הוסף – קוסמוי</div><div class="form-row"><div class="form-g" style="flex:2"><label>שם</label><input type="text" class="inp" id="na-samui-n"></div><div class="form-g"><label>עלות (₪)</label><input type="number" class="inp" id="na-samui-c"></div><div class="form-g"><label>משך</label><input type="text" class="inp" id="na-samui-d" placeholder="יום שלם"></div></div><input type="text" class="inp" id="na-samui-notes" placeholder="הערות..." style="margin-bottom:8px"><button class="btn btn-teal" onclick="addAttr('samui')">+ הוסף</button></div></div>
+  <div id="area-pattaya" class="area-section"><div class="attr-grid" id="ag-pattaya"></div><div class="add-form"><div class="add-form-title">➕ הוסף – פטאייה</div><div class="form-row"><div class="form-g" style="flex:2"><label>שם</label><input type="text" class="inp" id="na-pattaya-n"></div><div class="form-g"><label>עלות (₪)</label><input type="number" class="inp" id="na-pattaya-c"></div><div class="form-g"><label>משך</label><input type="text" class="inp" id="na-pattaya-d" placeholder="2-3 שעות"></div></div><input type="text" class="inp" id="na-pattaya-notes" placeholder="הערות..." style="margin-bottom:8px"><button class="btn btn-teal" onclick="addAttr('pattaya')">+ הוסף</button></div></div>
+  <div id="area-all" class="area-section"><div id="all-attr-cont"></div></div>
+</div>
+
+<div id="tab-planning" class="tab-content">
+  <div class="section-hdr">📅 תכנון</div>
+  <div class="sub-tabs">
+    <button class="sub-tab active" onclick="switchSub(this,'planning','timeline')">📅 לוח זמנים</button>
+    <button class="sub-tab" onclick="switchSub(this,'planning','checklist')">✅ צ'קליסט יומי</button>
+    <button class="sub-tab" onclick="switchSub(this,'planning','packing')">🧳 ציוד</button>
+  </div>
+  <div id="sp-planning-timeline" class="sub-panel active" style="display:block">
+    <div class="card edit-only">
+      <div class="card-title">⚙️ הגדרות</div>
+      <div class="form-row">
+        <div class="form-g"><label>מספר ימים</label><input type="number" class="inp" id="numDays" value="14" min="1" max="30" onchange="genTimeline()"></div>
+        <div class="form-g"><label>תאריך התחלה</label><input type="date" class="inp" id="tlStart" onchange="genTimeline()"></div>
+      </div>
+      <button class="btn btn-gold btn-sm" onclick="genTimeline()">🔄 עדכן</button>
+    </div>
+    <div class="timeline" id="tl-container"></div>
+  </div>
+
+  <div id="sp-planning-checklist" class="sub-panel">
+    <div class="card">
+      <div class="card-title" style="justify-content:space-between">
+        <span>✅ צ'קליסט יומי</span>
+        <button class="btn btn-ghost btn-sm" onclick="resetDailyChecklist()" style="font-size:.7rem">🔄 אפס הכל</button>
+      </div>
+      <div style="font-size:.78rem;color:var(--text-l);margin-bottom:14px">סמן כל פריט בתחילת כל יום לפני שיוצאים</div>
+      <div id="daily-checklist-grid" style="display:grid;grid-template-columns:1fr;gap:10px"></div>
+    </div>
+  </div>
+
+  <div id="sp-planning-packing" class="sub-panel">
+    <div class="flex-between" style="margin-bottom:12px">
+      <div style="font-size:.8rem;color:var(--text-l)">סמן פריטים שכבר ארזת 📦</div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="window.print()">🖨️ הדפס</button>
+        <button class="btn btn-teal btn-sm" onclick="resetPacking()">🔄 אפס</button>
+      </div>
+    </div>
+    <div class="pack-grid" id="pack-grid"></div>
+  </div>
+</div>
+
+<div id="tab-budget" class="tab-content">
+  <div class="section-hdr">💰 תקציב</div>
+  <div class="curr-toggle">
+    <span style="font-size:.73rem;color:var(--text-l)">שער: 1 THB =</span>
+    <input type="number" id="thbRate" value="0.107" step="0.001" style="width:62px;border:1px solid var(--border);border-radius:6px;padding:4px 6px;font-size:.77rem" oninput="dQ()">
+    <span style="font-size:.73rem;color:var(--text-l)">₪</span>
+    <button class="curr-btn active" onclick="setCurr('ils')" id="cILS">₪ שקל</button>
+    <button class="curr-btn" onclick="setCurr('thb')" id="cTHB">฿ באט</button>
+  </div>
+
+  <div class="budget-tabs">
+    <button class="btab active all" onclick="switchBpane(this,'all')">📊 השוואה</button>
+    <button class="btab a" onclick="switchBpane(this,'a')" id="btab-a">👪 <span id="bl-a">משפחה א׳</span></button>
+    <button class="btab b" onclick="switchBpane(this,'b')" id="btab-b">👪 <span id="bl-b">משפחה ב׳</span></button>
+  </div>
+
+  <div class="bpane active" id="bp-all" style="display:block">
+    <div class="total-box all-box" style="background:linear-gradient(135deg,var(--teal-d),var(--teal)) !important">
+      <div><div class="total-lbl">סה״כ שתי המשפחות</div></div>
+      <div><div class="total-amt" id="grand-total">₪0</div></div>
+    </div>
+    <div class="budget-bars" id="budget-bars-cont"></div>
+    <div class="card">
+      <div class="card-title">💱 מחשבון מטבע</div>
+      <div class="form-row" style="align-items:flex-end">
+        <div class="form-g"><label>סכום</label><input type="number" class="inp" id="conv-amt" placeholder="1000" oninput="convertCurr()"></div>
+        <div class="form-g"><label>מ-</label><select class="inp" id="conv-from" onchange="convertCurr()"><option value="ils">₪ שקל</option><option value="thb">฿ באט</option><option value="usd">$ דולר</option></select></div>
+        <div class="form-g" style="flex:2"><label>תוצאה</label><div class="inp" id="conv-result" style="background:rgba(255,255,255,0.4);font-weight:700;padding:8px 10px;border-radius:8px;text-align:center">—</div></div>
+      </div>
+      <div style="font-size:.7rem;color:var(--text-ll);margin-top:4px">1 ILS ≈ 9.3 THB | 1 USD ≈ 35 THB (משוערים)</div>
+    </div>
+  </div>
+
+  <div class="bpane" id="bp-a" style="display:none">
+    <div class="total-box a-box" style="background:linear-gradient(135deg,var(--teal-d),var(--teal)) !important">
+      <div><div class="total-lbl" id="tbox-a-lbl">משפחה א׳</div><div class="total-amt" id="total-a">₪0</div><div class="total-per" id="per-a">לאדם: ₪0</div></div>
+      <div style="font-size:2.8rem">👪</div>
+    </div>
+    <div class="card" style="border-right:4px solid var(--fam-a)">
+      <div class="card-title">✈️ עלות טיסות</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div style="background:var(--fam-a-l);border-radius:10px;padding:13px;text-align:center">
+          <div style="font-size:.67rem;color:var(--text-l);font-weight:700;margin-bottom:5px">🌍 בינלאומיות</div>
+          <div style="font-family:Cinzel,serif;font-size:1.2rem;color:var(--fam-a);font-weight:700" id="fa-flt-intl">₪0</div>
+        </div>
+        <div style="background:var(--fam-a-l);border-radius:10px;padding:13px;text-align:center">
+          <div style="font-size:.67rem;color:var(--text-l);font-weight:700;margin-bottom:5px">🛩️ פנים תאילנד</div>
+          <div style="font-family:Cinzel,serif;font-size:1.2rem;color:var(--fam-a);font-weight:700" id="fa-flt-dom">₪0</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--fam-a);border-radius:10px;padding:11px 16px;color:#fff">
+        <span style="font-size:.8rem;font-weight:700">סה״כ טיסות</span>
+        <span style="font-family:Cinzel,serif;font-size:1.15rem;font-weight:700" id="fa-flt-sum">₪0</span>
+      </div>
+    </div>
+    <div class="card" style="border-right:4px solid var(--fam-a)">
+      <div class="card-title">🏨 עלות לינה</div>
+      <div id="fa-hotels-breakdown" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;min-height:20px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--fam-a);border-radius:10px;padding:11px 16px;color:#fff">
+        <span style="font-size:.8rem;font-weight:700">סה״כ לינה</span>
+        <span style="font-family:Cinzel,serif;font-size:1.15rem;font-weight:700" id="fa-htl-sum">₪0</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="bpane" id="bp-b" style="display:none">
+    <div class="total-box b-box" style="background:linear-gradient(135deg,var(--gold-d),var(--gold)) !important">
+      <div><div class="total-lbl" id="tbox-b-lbl">משפחה ב׳</div><div class="total-amt" id="total-b">₪0</div><div class="total-per" id="per-b">לאדם: ₪0</div></div>
+      <div style="font-size:2.8rem">👪</div>
+    </div>
+    <div class="card" style="border-right:4px solid var(--fam-b)">
+      <div class="card-title">✈️ עלות טיסות</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div style="background:var(--fam-b-l);border-radius:10px;padding:13px;text-align:center">
+          <div style="font-size:.67rem;color:var(--text-l);font-weight:700;margin-bottom:5px">🌍 בינלאומיות</div>
+          <div style="font-family:Cinzel,serif;font-size:1.2rem;color:var(--fam-b);font-weight:700" id="fb-flt-intl">₪0</div>
+        </div>
+        <div style="background:var(--fam-b-l);border-radius:10px;padding:13px;text-align:center">
+          <div style="font-size:.67rem;color:var(--text-l);font-weight:700;margin-bottom:5px">🛩️ פנים תאילנד</div>
+          <div style="font-family:Cinzel,serif;font-size:1.2rem;color:var(--fam-b);font-weight:700" id="fb-flt-dom">₪0</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--fam-b);border-radius:10px;padding:11px 16px;color:#fff">
+        <span style="font-size:.8rem;font-weight:700">סה״כ טיסות</span>
+        <span style="font-family:Cinzel,serif;font-size:1.15rem;font-weight:700" id="fb-flt-sum">₪0</span>
+      </div>
+    </div>
+    <div class="card" style="border-right:4px solid var(--fam-b)">
+      <div class="card-title">🏨 עלות לינה</div>
+      <div id="fb-hotels-breakdown" style="display:flex;flex-direction:column;gap:8px;margin-bottom:12px;min-height:20px"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--fam-b);border-radius:10px;padding:11px 16px;color:#fff">
+        <span style="font-size:.8rem;font-weight:700">סה״כ לינה</span>
+        <span style="font-family:Cinzel,serif;font-size:1.15rem;font-weight:700" id="fb-htl-sum">₪0</span>
+      </div>
+    </div>
+  </div>
+
+
+</main>
+
+<nav class="bottom-nav">
+  <div class="bnav-tab active" onclick="gotoTab('overview')" data-tab="overview"><div class="icon">🏠</div><div>סקירה</div></div>
+  <div class="bnav-tab" onclick="gotoTab('flights')" data-tab="flights"><div class="icon">✈️</div><div>טיסות</div></div>
+  <div class="bnav-tab" onclick="gotoTab('hotels')" data-tab="hotels"><div class="icon">🏨</div><div>לינה</div></div>
+  <div class="bnav-tab" onclick="gotoTab('attractions')" data-tab="attractions"><div class="icon">🗺️</div><div>אטרקציות</div></div>
+  <div class="bnav-tab" onclick="gotoTab('planning')" data-tab="planning"><div class="icon">📅</div><div>תכנון</div></div>
+  <div class="bnav-tab" onclick="gotoTab('budget')" data-tab="budget"><div class="icon">💰</div><div>תקציב</div></div>
+</nav>
+
+<script>
+let _dt, _st;
+function dQ(){
+  markUnsaved();
+  clearTimeout(_dt);
+  _dt = setTimeout(() => { calcBudgets(); }, 350);
+}
+function dS(){
+  markUnsaved();
+  clearTimeout(_st);
+  _st = setTimeout(() => { saveAll(false); }, 500);
+}
+
+function calcDays(){
+  const dep = document.getElementById('depDate').value;
+  const ret = document.getElementById('retDate').value;
+  if(!dep || !ret) return;
+  const d1 = new Date(dep), d2 = new Date(ret);
+  if(d2 <= d1) return;
+  const days = Math.round((d2 - d1) / 86400000);
+  document.getElementById('ov-days').textContent = days;
+  const ndEl = document.getElementById('numDays');
+  if(ndEl){ ndEl.value = days; genTimeline(); }
+  dQ();
+}
+
+function gotoTab(id){
+  // Hide all tabs with inline style (overrides all CSS)
+  document.querySelectorAll('.tab-content').forEach(t=>{
+    t.classList.remove('active');
+    t.style.display='none';
+  });
+  document.querySelectorAll('.tnav-tab,.bnav-tab').forEach(t=>t.classList.remove('active'));
+  // Show selected tab
+  const targetTab=document.getElementById('tab-'+id);
+  if(targetTab){
+    targetTab.classList.add('active');
+    targetTab.style.display='block';
+    // Show sub-panels with inline style
+    let shown=false;
+    targetTab.querySelectorAll('.sub-panel').forEach(p=>{
+      if(p.classList.contains('active')&&!shown){
+        p.style.display='block'; shown=true;
+      } else {
+        p.style.display='none';
+      }
+    });
+    if(!shown){
+      const first=targetTab.querySelector('.sub-panel');
+      if(first){first.style.display='block';first.classList.add('active');}
+    }
+  }
+  document.querySelectorAll('[data-tab="'+id+'"]').forEach(el=>el.classList.add('active'));
+  window.scrollTo({top:0,behavior:'smooth'});
+  if(id==='attractions') refreshAllAttr();
+}
+
+function switchSub(btn,tabId,panelId){
+  btn.parentElement.querySelectorAll('.sub-tab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  // Use inline styles — no CSS cascade dependency
+  btn.closest('.tab-content').querySelectorAll('.sub-panel').forEach(p=>{
+    p.classList.remove('active');
+    p.style.display='none';
+  });
+  const panel=document.getElementById('sp-'+tabId+'-'+panelId);
+  if(panel){panel.classList.add('active');panel.style.display='block';}
+}
+
+function switchBpane(btn,id){
+  document.querySelectorAll('.btab').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.bpane').forEach(p=>{p.classList.remove('active');p.style.display='none';});
+  btn.classList.add('active');
+  const pane=document.getElementById('bp-'+id);
+  if(pane){pane.classList.add('active');pane.style.display='block';}
+}
+
+function switchArea(e,area){
+  e.target.closest('.area-tabs').querySelectorAll('.area-tab').forEach(t=>t.classList.remove('active'));
+  e.target.classList.add('active');
+  e.target.closest('.tab-content').querySelectorAll('.area-section').forEach(s=>s.classList.remove('active'));
+  const sec = document.getElementById('area-'+area);
+  if(sec) sec.classList.add('active');
+  if(area==='all') refreshAllAttr();
+}
+
+function toggleEdit(){
+  if(!window.canEdit) return;
+  const isEdit = document.body.classList.contains('edit-mode');
+  document.body.classList.toggle('edit-mode', !isEdit);
+  // isEdit=true אומר שהיינו בעריכה ועוברים לתצוגה → הצג "ערוך"
+  // isEdit=false אומר שהיינו בתצוגה ועוברים לעריכה → הצג "תצוגה"
+  document.getElementById('editToggleBtn').textContent = isEdit ? '✏️ ערוך' : '👁️ תצוגה';
+}
+
+function updateStatus(sel){
+  sel.className = 'status-sel s-' + sel.value;
+  updateProgress();
+}
+
+function updateFamNames(){
+  const a = document.getElementById('fam1Name').value || 'משפחה א׳';
+  const b = document.getElementById('fam2Name').value || 'משפחה ב׳';
+  
+  document.getElementById('h-fam-a').textContent = a;
+  document.getElementById('h-fam-b').textContent = b;
+  document.getElementById('fam-a-details-label').textContent = a;
+  document.getElementById('fam-b-details-label').textContent = b;
+  document.getElementById('ftc-name-a').textContent = a;
+  document.getElementById('ftc-name-b').textContent = b;
+  document.getElementById('bl-a').textContent = a;
+  document.getElementById('bl-b').textContent = b;
+
+  const tboxA = document.getElementById('tbox-a-lbl');
+  const tboxB = document.getElementById('tbox-b-lbl');
+  if(tboxA) tboxA.textContent = 'תקציב ' + a;
+  if(tboxB) tboxB.textContent = 'תקציב ' + b;
+  const expA = document.getElementById('exp-a-title');
+  const expB = document.getElementById('exp-b-title');
+  if(expA) expA.textContent = a;
+  if(expB) expB.textContent = b;
+
+  document.querySelectorAll('.fam-a-label').forEach(el => el.textContent = a);
+  document.querySelectorAll('.fam-b-label').forEach(el => el.textContent = b);
+  dQ();
+}
+
+function editFam(n){
+  if(!window.canEdit) return;
+  if(!document.body.classList.contains('edit-mode')) return;
+  const inp = document.getElementById('fam'+n+'Name');
+  const current = inp ? inp.value : '';
+  const label = n === 1 ? 'משפחה א׳' : 'משפחה ב׳';
+  const newName = prompt(`שם ${label}:`, current);
+  if(newName === null) return;
+  if(inp){ inp.value = newName.trim(); updateFamNames(); dS(); }
+}
+
+function updatePax(){
+  const paxA = parseInt(document.getElementById('fam1Pax').value) || 0;
+  const paxB = parseInt(document.getElementById('fam2Pax').value) || 0;
+  document.getElementById('ov-pax').textContent = paxA + paxB;
+}
+
+function updateProgress(){
+  const all = document.querySelectorAll('.status-sel');
+  let done=0, proc=0, pend=0;
+  all.forEach(s => {
+    if(s.value === 'done') done++;
+    else if(s.value === 'process') proc++;
+    else pend++;
+  });
+  const total = all.length;
+  document.getElementById('ov-conf').textContent = done;
+  document.getElementById('ov-pending').textContent = pend + proc;
+  document.getElementById('bp-count').textContent = `${done} / ${total} אושרו`;
+  document.getElementById('bp-fill').style.width = total ? (done / total * 100) + '%' : '0%';
+  document.getElementById('bp-done-n').textContent = done;
+  document.getElementById('bp-proc-n').textContent = proc;
+  document.getElementById('bp-pend-n').textContent = pend;
+}
+
+function calcHotel(hid){
+  const h = document.getElementById(hid);
+  if(!h) return;
+  const ap = parseFloat(h.querySelector('.h-a-price')?.value) || 0;
+  const an = parseFloat(h.querySelector('.h-a-nights')?.value) || 0;
+  const bp = parseFloat(h.querySelector('.h-b-price')?.value) || 0;
+  const bn = parseFloat(h.querySelector('.h-b-nights')?.value) || 0;
+  
+  const aTot = document.getElementById(hid+'-a-tot');
+  const bTot = document.getElementById(hid+'-b-tot');
+  if(aTot) aTot.value = '₪' + (ap * an).toLocaleString();
+  if(bTot) bTot.value = '₪' + (bp * bn).toLocaleString();
+}
+
+function updateHotelLink(id){
+  const inp = document.getElementById(id+'-link');
+  const btn = document.getElementById(id+'-link-btn');
+  if(!inp || !btn) return;
+  const val = inp.value.trim();
+  if(val && (val.startsWith('http') || val.startsWith('www'))){
+    btn.href = val.startsWith('http') ? val : 'https://'+val;
+    btn.style.display = 'inline-block';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+let currMode = 'ils';
+function setCurr(c){
+  currMode = c;
+  document.getElementById('cILS').classList.toggle('active', c==='ils');
+  document.getElementById('cTHB').classList.toggle('active', c==='thb');
+  calcBudgets();
+}
+
+function fmt(v) {
+  const r = parseFloat(document.getElementById('thbRate').value) || 0.107;
+  const amt = currMode === 'ils' ? v : v / r;
+  return (currMode === 'ils' ? '₪' : '฿') + Math.round(amt).toLocaleString();
+}
+
+function calcBudgets(){
+  const paxA = parseInt(document.getElementById('fam1Pax').value) || 2;
+  const paxB = parseInt(document.getElementById('fam2Pax').value) || 2;
+
+  // טיסות — מפריד בינלאומי מפנים לפי data-ftype או מיקום ב-DOM
+  let fltIntlA=0, fltIntlB=0, fltDomA=0, fltDomB=0;
+
+  document.querySelectorAll('#intl-flights-list .flight-card').forEach(card => {
+    const aPP = card.querySelector('.flt-a-pp');
+    const bPP = card.querySelector('.flt-b-pp');
+    if(aPP && bPP){
+      const ap = parseFloat(aPP.value) || 0;
+      const bp = parseFloat(bPP.value) || 0;
+      fltIntlA += ap * paxA;
+      fltIntlB += bp * paxB;
+      const ros = card.querySelectorAll('.fam-split input[readonly]');
+      if(ros[0]) ros[0].value = '₪' + (ap*paxA).toLocaleString();
+      if(ros[1]) ros[1].value = '₪' + (bp*paxB).toLocaleString();
+    }
+  });
+
+  document.querySelectorAll('#dom-flights-list .flight-card').forEach(card => {
+    const aPP = card.querySelector('.flt-a-pp');
+    const bPP = card.querySelector('.flt-b-pp');
+    if(aPP && bPP){
+      const ap = parseFloat(aPP.value) || 0;
+      const bp = parseFloat(bPP.value) || 0;
+      fltDomA += ap * paxA;
+      fltDomB += bp * paxB;
+      const ros = card.querySelectorAll('.fam-split input[readonly]');
+      if(ros[0]) ros[0].value = '₪' + (ap*paxA).toLocaleString();
+      if(ros[1]) ros[1].value = '₪' + (bp*paxB).toLocaleString();
+    }
+  });
+
+  const fltA = fltIntlA + fltDomA;
+  const fltB = fltIntlB + fltDomB;
+
+  // עדכון שדות טיסות בתקציב
+  const setEl = (id, val) => { const el=document.getElementById(id); if(el) el.textContent=fmt(val); };
+  setEl('fa-flt-intl', fltIntlA);
+  setEl('fa-flt-dom',  fltDomA);
+  setEl('fa-flt-sum',  fltA);
+  setEl('fb-flt-intl', fltIntlB);
+  setEl('fb-flt-dom',  fltDomB);
+  setEl('fb-flt-sum',  fltB);
+
+  // לינה + פירוט לפי מלון
+  let htlA=0, htlB=0;
+  const htlBreakA = [], htlBreakB = [];
+  document.querySelectorAll('.hotel-card').forEach(h => {
+    const name = h.querySelector('.hotel-hdr-title')?.textContent?.trim() || 'מלון';
+    const ap = parseFloat(h.querySelector('.h-a-price')?.value) || 0;
+    const an = parseFloat(h.querySelector('.h-a-nights')?.value) || 0;
+    const bp = parseFloat(h.querySelector('.h-b-price')?.value) || 0;
+    const bn = parseFloat(h.querySelector('.h-b-nights')?.value) || 0;
+    const totA = ap * an, totB = bp * bn;
+    htlA += totA; htlB += totB;
+    if(totA > 0) htlBreakA.push({name, tot:totA, nights:an});
+    if(totB > 0) htlBreakB.push({name, tot:totB, nights:bn});
+  });
+  setEl('fa-htl-sum', htlA);
+  setEl('fb-htl-sum', htlB);
+
+  // פירוט מלונות
+  const renderBreak = (contId, items, color) => {
+    const cont = document.getElementById(contId);
+    if(!cont) return;
+    cont.innerHTML = items.length ? items.map(i=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background:rgba(0,0,0,.03);border-radius:8px;font-size:.8rem">
+        <span style="font-weight:600">${i.name}</span>
+        <span style="color:${color};font-weight:700">${fmt(i.tot)} <span style="color:var(--text-ll);font-weight:400">(${i.nights} לילות)</span></span>
+      </div>`).join('') : '<div style="font-size:.78rem;color:var(--text-ll);padding:8px">אין מלונות עם מחיר</div>';
+  };
+  renderBreak('fa-hotels-breakdown', htlBreakA, 'var(--fam-a)');
+  renderBreak('fb-hotels-breakdown', htlBreakB, 'var(--fam-b)');
+
+  // העברות
+  let transA=0, transB=0;
+  document.querySelectorAll('.transfer-card').forEach(card => {
+    const costEl = card.querySelector('.cost-val');
+    if(costEl){
+      const val = parseFloat(costEl.textContent.replace(/[^0-9.]/g,'')) || 0;
+      transA += val / 2;
+      transB += val / 2;
+    }
+  });
+
+  // הוצאות נוספות
+  function sumCat(tbId, cat){
+    let t=0;
+    document.querySelectorAll('#'+tbId+' tr').forEach(tr => {
+      const c = tr.querySelectorAll('td');
+      if(c.length < 3) return;
+      const n = (c[0].textContent||'').toLowerCase();
+      const v = parseFloat(c[2].textContent) || 0;
+      if(!cat || n.includes(cat)) t += v;
+    });
+    return t;
+  }
+
+  const faFood = sumCat('exp-a-table','אוכל');
+  const faShop = sumCat('exp-a-table','קניות');
+  const faMisc = Math.max(0, sumCat('exp-a-table',null) - (faFood+faShop));
+  const fbFood = sumCat('exp-b-table','אוכל');
+  const fbShop = sumCat('exp-b-table','קניות');
+  const fbMisc = Math.max(0, sumCat('exp-b-table',null) - (fbFood+fbShop));
+
+  const totA = fltA + htlA + transA + faFood + faShop + faMisc;
+  const totB = fltB + htlB + transB + fbFood + fbShop + fbMisc;
+  const grand = totA + totB;
+
+  // עדכון סיכומים ראשיים
+  setEl('total-a',    totA);
+  setEl('total-b',    totB);
+  setEl('grand-total',grand);
+  setEl('ftc-a',      totA);
+  setEl('ftc-b',      totB);
+  const elFtcAPer = document.getElementById('ftc-a-per'); if(elFtcAPer) elFtcAPer.textContent='לאדם: '+fmt(paxA?totA/paxA:0);
+  const elFtcBPer = document.getElementById('ftc-b-per'); if(elFtcBPer) elFtcBPer.textContent='לאדם: '+fmt(paxB?totB/paxB:0);
+  const elPerA = document.getElementById('per-a'); if(elPerA) elPerA.textContent='לאדם: '+fmt(paxA?totA/paxA:0);
+  const elPerB = document.getElementById('per-b'); if(elPerB) elPerB.textContent='לאדם: '+fmt(paxB?totB/paxB:0);
+
+  // סרגלי תקציב
+  const cats = [
+    {lbl:'✈️ בינלאומיות', a:fltIntlA, b:fltIntlB},
+    {lbl:'🛩️ פנימיות',    a:fltDomA,  b:fltDomB},
+    {lbl:'🏨 לינה',       a:htlA,     b:htlB},
+    {lbl:'🚌 העברות',     a:transA,   b:transB},
+    {lbl:'🍜 אוכל',       a:faFood,   b:fbFood},
+    {lbl:'🛍️ קניות',      a:faShop,   b:fbShop},
+    {lbl:'🧾 שונות',      a:faMisc,   b:fbMisc},
+  ];
+  const cont = document.getElementById('budget-bars-cont');
+  if(cont){
+    cont.innerHTML='';
+    cats.forEach(cat => {
+      const total = cat.a + cat.b;
+      if(total===0) return;
+      const pctA = cat.a/total*100;
+      const div = document.createElement('div');
+      div.className='bbar-row';
+      div.innerHTML=`<div class="bbar-header">
+        <span class="bbar-cat">${cat.lbl}</span>
+        <div class="bbar-amts"><span class="bbar-a">${fmt(cat.a)}</span><span style="color:var(--text-ll)">|</span><span class="bbar-b">${fmt(cat.b)}</span></div>
+      </div>
+      <div class="bbar-track">
+        <div class="bbar-a-fill" style="width:${pctA}%"></div>
+        <div class="bbar-b-fill" style="right:${pctA}%;width:${100-pctA}%"></div>
+      </div>`;
+      cont.appendChild(div);
+    });
+  }
+
+  updateProgress();
+  saveAll();
+}
+
+function convertCurr(){
+  const amt = parseFloat(document.getElementById('conv-amt').value) || 0;
+  const from = document.getElementById('conv-from').value;
+  const r = parseFloat(document.getElementById('thbRate').value) || 0.107;
+  let res = [];
+  if(from==='ils'){ res.push('฿'+Math.round(amt/r).toLocaleString()); res.push('$'+(amt/3.7).toFixed(0)); }
+  else if(from==='thb'){ res.push('₪'+(amt*r).toFixed(1)); res.push('$'+(amt/35).toFixed(1)); }
+  else { res.push('₪'+(amt*3.7).toFixed(0)); res.push('฿'+(amt*35).toFixed(0)); }
+  document.getElementById('conv-result').textContent = res.join(' | ');
+}
+
+const defaultAttr = {
+  bangkok:[
+    {name:'Wat Phra Kaew – מקדש הבודהה', cost:15, dur:'2-3 שעות', notes:'מכסה לבוש חובה!'}
+  ],
+  samui:[
+    {name:'Big Buddha Temple', cost:0, dur:'1 שעה', notes:'כניסה חופשית'}
+  ],
+  pattaya:[
+    {name:'Sanctuary of Truth', cost:40, dur:'2-3 שעות', notes:'מקדש עץ מפוסל מהמם'}
+  ]
+};
+
+function mkAttrCard(area, item){
+  const d = document.createElement('div');
+  d.className = 'attr-card';
+  d.innerHTML = `<button class="rm-btn del-btn" onclick="this.closest('.attr-card').remove();countAttr();dQ();">✕</button>
+    <div class="attr-name" contenteditable="true" oninput="dS()">${item.name}</div>
+    <div class="attr-meta"><span class="badge b-teal">💰 ₪${item.cost||0}</span><span class="badge b-gold">⏱️ ${item.dur||''}</span></div>
+    <div class="attr-notes" contenteditable="true" oninput="dS()">${item.notes||''}</div>
+    <button onclick="openMap(null,'${item.name.replace(/'/g,'')}, Thailand')" class="btn btn-ghost btn-sm" style="margin-top:8px;width:100%;font-size:.72rem">🗺️ פתח במפה</button>`;
+  return d;
+}
+
+function loadAttrs(){
+  Object.keys(defaultAttr).forEach(area => {
+    const g = document.getElementById('ag-'+area);
+    if(g && g.children.length === 0) {
+      defaultAttr[area].forEach(item => g.appendChild(mkAttrCard(area, item)));
+    }
+  });
+  countAttr();
+}
+
+function addAttr(area){
+  const n = document.getElementById(`na-${area}-n`);
+  if(!n || !n.value.trim()){ if(n) n.focus(); return; }
+  const c = document.getElementById(`na-${area}-c`).value || 0;
+  const d = document.getElementById(`na-${area}-d`).value || '';
+  const nt = document.getElementById(`na-${area}-notes`).value || '';
+  
+  const targetGrid = document.getElementById('ag-'+area);
+  if(targetGrid) {
+    targetGrid.appendChild(mkAttrCard(area, {name:n.value, cost:c, dur:d, notes:nt}));
+  }
+  
+  n.value=''; document.getElementById(`na-${area}-c`).value='';
+  document.getElementById(`na-${area}-d`).value=''; document.getElementById(`na-${area}-notes`).value='';
+  countAttr(); refreshAllAttr(); dQ();
+}
+
+function countAttr(){
+  let t=0;
+  ['bangkok','samui','pattaya'].forEach(a => {
+    const g = document.getElementById('ag-'+a);
+    if(g) t += g.children.length;
+  });
+  document.getElementById('ov-attr').textContent = t;
+}
+
+function countHotels(){
+  const list = document.getElementById('hotels-list');
+  const n = list ? list.querySelectorAll('.hotel-card').length : 0;
+  const el = document.getElementById('ov-hotels');
+  if(el) el.textContent = n;
+}
+
+function refreshAllAttr(){
+  const c = document.getElementById('all-attr-cont');
+  if(!c) return;
+  c.innerHTML = '';
+  const lbls = {bangkok:'🏙️ בנגקוק', samui:'🌴 קוסמוי', pattaya:'🎡 פטאייה'};
+  ['bangkok','samui','pattaya'].forEach(area => {
+    const src = document.getElementById('ag-'+area);
+    if(!src || !src.children.length) return;
+    const t = document.createElement('div'); t.className = 'area-title'; t.textContent = lbls[area]; c.appendChild(t);
+    const g = document.createElement('div'); g.className = 'attr-grid'; g.style.marginBottom = '18px';
+    
+    Array.from(src.children).forEach(card => {
+      const cloned = card.cloneNode(true);
+      const rm = cloned.querySelector('.rm-btn'); if(rm) rm.remove();
+      cloned.querySelectorAll('[contenteditable]').forEach(el => el.removeAttribute('contenteditable'));
+      g.appendChild(cloned);
+    });
+    c.appendChild(g);
+  });
+}
+
+function genTimeline(){
+  const n = parseInt(document.getElementById('numDays').value) || 14;
+  const sv = document.getElementById('tlStart').value;
+  const cont = document.getElementById('tl-container');
+  if(!cont) return;
+  document.getElementById('ov-days').textContent = n;
+  cont.innerHTML = '';
+  const opts = [{v:'bangkok',l:'🏙️ בנגקוק'},{v:'samui',l:'🌴 קוסמוי'},{v:'pattaya',l:'🎡 פטאייה'},{v:'transit',l:'✈️ נסיעה'}].map(o=>`<option value="${o.v}">${o.l}</option>`).join('');
+  
+  for(let i=1; i<=n; i++){
+    let ds = '';
+    if(sv){ const d = new Date(sv); d.setDate(d.getDate()+i-1); ds = d.toISOString().split('T')[0]; }
+    const div = document.createElement('div');
+    div.className = 'tl-item';
+    div.innerHTML = `<div class="tl-hdr"><span class="tl-daynum">יום ${i}</span><select class="tl-loc-sel" onchange="dS()">${opts}</select><input type="date" class="tl-date-inp" value="${ds}" onchange="dS()"></div><div class="tl-body"><textarea class="tl-notes" placeholder="תוכניות ליום זה..." oninput="dS()"></textarea></div>`;
+    cont.appendChild(div);
+  }
+}
+
+const packData = [
+  {cat:'👔 ביגוד', items:['חולצות קצרות (7+)','מכנסיים קצרים','מכנסיים ארוכים (מקדשים)','שמלה/חצאית קלה','בגד ים (2)','כובע רחב שוליים','גרביים','תחתונים','ז׳קט קל/רוח']},
+  {cat:'👟 נעליים', items:['נעלי ספורט נוחות','כפכפים לחוף','נעלי שכבה (מקדשים)']},
+  {cat:'🧴 טואלטיקה', items:['קרם הגנה SPF50+','ספריי יתושים DEET','שמפו/סבון','מברשת שיניים + משחה','תרופות בסיסיות (כאב, חום, שלשול)','פלסטרים','גילוח','אנטי-היסטמין']},
+  {cat:'💊 רפואה', items:['מרשמים אישיים (כפול)','ביטוח נסיעות (אישור כתוב)','חיסונים מעודכנים','מוקריי אוזניים','משחת אנטיביוטיקה']},
+  {cat:'📱 טכנולוגיה', items:['מטען/פאוורבנק','מתאם חשמל (220V Type A/B)','אוזניות','מצלמה + מטען','כרטיס SIM מקומי (לקנות בנמל תעופה)','נרתיק עמיד מים לטלפון']},
+  {cat:'🧳 מסמכים ושונות', items:['דרכון (תוקף 6+ חודשים)','כרטיסי טיסה (מודפסים + דיגיטל)','אישורי מלון','כסף מזומן (THB + ILS)','ארנק שני מוסתר','נעילת מזוודה (TSA)','שקיות ניילון (לכביסה ורטוב)','מצלמת GoPro / עמיד מים']}
+];
+
+function buildPacking(){
+  const grid = document.getElementById('pack-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  packData.forEach((cat, ci) => {
+    const sv = JSON.parse(localStorage.getItem('pk_'+ci) || '{}');
+    const div = document.createElement('div');
+    div.className = 'pack-cat';
+    const chkd = Object.values(sv).filter(Boolean).length;
+    div.innerHTML = `<div class="pack-cat-title"><span>${cat.cat}</span></div>
+      <div id="pc_${ci}">${cat.items.map((it, ii) => `<div class="pack-item"><input type="checkbox" id="pi_${ci}_${ii}" ${sv[ii]?'checked':''} onchange="savePack(${ci})"><label for="pi_${ci}_${ii}">${it}</label></div>`).join('')}</div>
+      <div class="prog-bar"><div class="prog-fill" id="pf_${ci}" style="width:${cat.items.length ? chkd/cat.items.length*100 : 0}%"></div></div>`;
+    grid.appendChild(div);
+  });
+}
+
+function savePack(ci){
+  const c = {};
+  document.querySelectorAll(`#pc_${ci} input`).forEach((cb, i) => { c[i] = cb.checked; });
+  localStorage.setItem('pk_'+ci, JSON.stringify(c));
+  const chkd = Object.values(c).filter(Boolean).length;
+  const total = packData[ci].items.length;
+  const fill = document.getElementById('pf_'+ci);
+  if(fill) fill.style.width = (chkd / total * 100) + '%';
+}
+
+function resetPacking(){
+  if(!confirm('לאפס את כל הרשימה?')) return;
+  document.querySelectorAll('.pack-item input').forEach(cb => cb.checked = false);
+  packData.forEach((_, ci) => {
+    localStorage.removeItem('pk_'+ci);
+    const fill = document.getElementById('pf_'+ci);
+    if(fill) fill.style.width = '0%';
+  });
+}
+
+function addExpRow(tbId){
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td contenteditable="true" oninput="dQ()">📌 קטגוריה</td><td contenteditable="true" oninput="dS()">תיאור</td><td contenteditable="true" class="exp-amt" oninput="dQ()">0</td><td contenteditable="true" oninput="dS()"></td><td><button class="btn btn-red btn-sm del-btn" onclick="this.closest(\'tr\').remove();dQ()">🗑️</button></td>';
+  document.getElementById(tbId).appendChild(tr);
+}
+
+function addDocRow(){
+  const tr = document.createElement('tr');
+  tr.innerHTML = '<td contenteditable="true" oninput="dS()">📌 סוג</td><td contenteditable="true" oninput="dS()">פריט</td><td contenteditable="true" oninput="dS()"></td><td contenteditable="true" style="direction:ltr" oninput="dS()"></td><td><select class="status-sel s-pending" onchange="updateStatus(this);dS()"><option value="pending">⏳ טרם הוזמן</option><option value="process">🔄 בתהליך</option><option value="done">✅ מאושר</option></select></td><td contenteditable="true" oninput="dS()"></td><td><button class="btn btn-red btn-sm del-btn" onclick="this.closest(\'tr\').remove()">🗑️</button></td>';
+  document.getElementById('docs-tbody').appendChild(tr);
+}
+
+let hc = 30;
+function addHotel(){
+  const name = document.getElementById('nh-name').value || 'מלון חדש';
+  const city = document.getElementById('nh-city').value || 'עיר';
+  hc++; const id = 'h-dyn' + hc;
+  
+  const div = document.createElement('div');
+  div.className = 'hotel-card';
+  div.id = id;
+  
+  div.innerHTML = `
+    <div class="hotel-hdr">
+      <div class="hotel-hdr-title" contenteditable="true" oninput="dS()">📍 ${city}</div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()">
+          <option value="pending">⏳ טרם הוזמן</option>
+          <option value="process">🔄 בתהליך</option>
+          <option value="done">✅ מאושר</option>
+        </select>
+        <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.hotel-card').remove();dQ();countHotels()">🗑️</button>
+      </div>
+    </div>
+    <div class="hotel-body">
+      <div class="form-row">
+        <div class="form-g" style="flex:2"><label>שם המלון</label><input type="text" class="inp" value="${name}" onchange="dS()"></div>
+        <div class="form-g"><label>דירוג</label><input type="text" class="inp" placeholder="⭐⭐⭐⭐" onchange="dS()"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-g"><label>צ׳ק-אין</label><input type="date" class="inp" onchange="dS()"></div>
+        <div class="form-g"><label>צ׳ק-אאוט</label><input type="date" class="inp" onchange="dS()"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-g" style="flex:1">
+          <label>🔗 קישור לתמונות / אתר</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="url" class="inp inp-ltr" id="${id}-link" placeholder="https://..." oninput="updateHotelLink('${id}');dS()">
+            <a id="${id}-link-btn" href="#" target="_blank" style="display:none;padding:8px 12px;background:var(--teal);color:#fff;border-radius:var(--r-s);font-size:.75rem;white-space:nowrap;text-decoration:none;flex-shrink:0">🌐 פתח</a>
+          </div>
+        </div>
+      </div>
+      <div class="form-row" style="margin-bottom:0">
+        <div class="form-g">
+          <label>📍 מיקום למפה</label>
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" class="inp inp-ltr" id="${id}-loc" placeholder="שם המלון, Bangkok" onchange="dS()">
+            <button onclick="openMap('${id}-loc')" class="btn btn-ghost btn-sm" style="white-space:nowrap;flex-shrink:0">🗺️ מפה</button>
+          </div>
+        </div>
+      </div>
+      <div class="fam-split" style="margin-top:14px;border-top:1px solid rgba(0,0,0,0.06)">
+        <div class="fam-col">
+          <div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div>
+          <div class="form-row" style="margin:0;gap:8px">
+            <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-a-price" placeholder="0" oninput="calcHotel('${id}');dQ()"></div>
+            <div class="form-g"><label>לילות</label><input type="number" class="inp h-a-nights" placeholder="0" oninput="calcHotel('${id}');dQ()"></div>
+            <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="${id}-a-tot" value="₪0"></div>
+          </div>
+        </div>
+        <div class="fam-col">
+          <div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div>
+          <div class="form-row" style="margin:0;gap:8px">
+            <div class="form-g"><label>מחיר/לילה (₪)</label><input type="number" class="inp h-b-price" placeholder="0" oninput="calcHotel('${id}');dQ()"></div>
+            <div class="form-g"><label>לילות</label><input type="number" class="inp h-b-nights" placeholder="0" oninput="calcHotel('${id}');dQ()"></div>
+            <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly id="${id}-b-tot" value="₪0"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.getElementById('hotels-list').appendChild(div);
+  document.getElementById('nh-name').value = '';
+  document.getElementById('nh-city').value = '';
+  
+  updateFamNames();
+  countHotels();
+}
+
+let fc = 30;
+function buildFltHTML(id, from, to, type, airline, hdrStyle){
+  return `
+    <div class="flight-hdr" style="${hdrStyle}">
+      <div class="flight-route"><span contenteditable="true" oninput="dS()">${from}</span><span style="opacity:.4;margin:0 4px">→</span><span contenteditable="true" oninput="dS()">${to}</span></div>
+      <span class="flight-type">${type}</span>
+      <div style="display:flex;gap:6px;align-items:center">
+        <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()">
+          <option value="pending">⏳ טרם הוזמן</option>
+          <option value="process">🔄 בתהליך</option>
+          <option value="done">✅ מאושר</option>
+        </select>
+        <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.flight-card').remove();dQ()">🗑️</button>
+      </div>
+    </div>
+    <div class="flight-body">
+      <div class="ff"><div class="ff-lbl">חברה</div><div class="ff-val" contenteditable="true" oninput="dS()">${airline}</div></div>
+      <div class="ff"><div class="ff-lbl">מס׳ טיסה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="ff"><div class="ff-lbl">תאריך</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="ff"><div class="ff-lbl">המראה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="ff"><div class="ff-lbl">נחיתה</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="ff"><div class="ff-lbl">Conf #</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="ff"><div class="ff-lbl">הערות</div><div class="ff-val" contenteditable="true" oninput="dS()"></div></div>
+    </div>
+    <div class="fam-split">
+      <div class="fam-col">
+        <div class="fam-a-label" style="margin-bottom:8px">משפחה א׳</div>
+        <div class="form-row" style="margin:0;gap:8px">
+          <div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-a-pp" placeholder="0" oninput="dQ()"></div>
+          <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div>
+        </div>
+      </div>
+      <div class="fam-col">
+        <div class="fam-b-label" style="margin-bottom:8px">משפחה ב׳</div>
+        <div class="form-row" style="margin:0;gap:8px">
+          <div class="form-g"><label>מחיר לנוסע (₪)</label><input type="number" class="inp flt-b-pp" placeholder="0" oninput="dQ()"></div>
+          <div class="form-g"><label>סה״כ</label><input type="text" class="inp" readonly value="₪0"></div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function addIntlFlight(){
+  const from = document.getElementById('nif-from').value || 'TLV';
+  const to = document.getElementById('nif-to').value || 'BKK';
+  const type = document.getElementById('nif-type').value || 'הלוך / חזור';
+  const airline = document.getElementById('nif-airline').value || '';
+  fc++; const id = 'fi' + fc;
+  
+  const div = document.createElement('div');
+  div.className = 'flight-card';
+  div.id = id;
+  div.innerHTML = buildFltHTML(id, from, to, type, airline, '');
+  document.getElementById('intl-flights-list').appendChild(div);
+  
+  ['nif-from','nif-to','nif-type','nif-airline'].forEach(i => document.getElementById(i).value = '');
+  updateFamNames();
+}
+
+function addDomFlight(){
+  const from = document.getElementById('ndf-from').value || 'BKK';
+  const to = document.getElementById('ndf-to').value || 'USM';
+  const airline = document.getElementById('ndf-airline').value || 'Bangkok Airways';
+  fc++; const id = 'fd' + fc;
+  
+  const div = document.createElement('div');
+  div.className = 'flight-card';
+  div.id = id;
+  div.style.cssText = 'border-right:4px solid var(--coral)';
+  div.innerHTML = buildFltHTML(id, from, to, '🛩️ פנים | Domestic', airline, 'background:linear-gradient(to left,#7c2d12,var(--coral))');
+  document.getElementById('dom-flights-list').appendChild(div);
+  
+  ['ndf-from','ndf-to','ndf-airline'].forEach(i => document.getElementById(i).value = '');
+  updateFamNames();
+}
+
+let tc = 30;
+function addTransfer(){
+  const from = document.getElementById('nt-from').value || 'מ...';
+  const to = document.getElementById('nt-to').value || 'אל...';
+  const type = document.getElementById('nt-type').value || 'taxi';
+  tc++;
+  
+  const div = document.createElement('div');
+  div.className = 'transfer-card';
+  const colors = {
+    taxi: 'background:linear-gradient(to left,#1a3a1a,#166534)',
+    bus:  'background:linear-gradient(to left,#451a03,#92400e)',
+    ferry:'background:linear-gradient(to left,#1e3a5f,#1d4ed8)'
+  };
+  
+  div.innerHTML = `
+    <div class="tr-hdr" style="${colors[type]||colors.taxi}">
+      <div class="tr-route"><span contenteditable="true" oninput="dS()">${from}</span><span style="opacity:.4;margin:0 6px">→</span><span contenteditable="true" oninput="dS()">${to}</span></div>
+      <select class="status-sel s-pending" onchange="updateStatus(this);updateProgress();dS()">
+        <option value="pending">⏳ טרם הוזמן</option>
+        <option value="process">🔄 בתהליך</option>
+        <option value="done">✅ מאושר</option>
+      </select>
+      <button class="btn btn-red btn-sm del-btn" onclick="this.closest('.transfer-card').remove();dQ()">🗑️</button>
+    </div>
+    <div class="tr-body">
+      <div class="tr-f"><div class="tr-lbl">סוג</div><div class="tr-val" contenteditable="true" oninput="dS()">${type}</div></div>
+      <div class="tr-f"><div class="tr-lbl">תאריך</div><div class="tr-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="tr-f"><div class="tr-lbl">שעה</div><div class="tr-val" contenteditable="true" oninput="dS()"></div></div>
+      <div class="tr-f"><div class="tr-lbl">עלות (₪)</div><div class="tr-val cost-val" contenteditable="true" oninput="dQ()">0</div></div>
+      <div class="tr-f"><div class="tr-lbl">הערות</div><div class="tr-val" contenteditable="true" oninput="dS()"></div></div>
+    </div>
+  `;
+  document.getElementById('airport-transfers').appendChild(div);
+  ['nt-from','nt-to'].forEach(i => document.getElementById(i).value = '');
+  dQ();
+}
+
+let _unsaved = false;
+function markUnsaved(){
+  _unsaved = true;
+  const ind = document.getElementById('saveIndicator');
+  if(ind) ind.className = 'save-indicator unsaved';
+}
+
+/* ══════════════════════════════════════
+   שמירה — מבוסס מבנה (לא input IDs)
+══════════════════════════════════════ */
+function collectCardData(card, fields){
+  const data = {};
+  fields.forEach(f => {
+    const el = f.sel ? card.querySelector(f.sel) : null;
+    if(!el) return;
+    if(f.type==='val') data[f.key] = el.value;
+    else if(f.type==='html') data[f.key] = el.innerHTML;
+    else if(f.type==='status') data[f.key] = el.value;
+  });
+  return data;
+}
+
+function saveAll(manual = false){
+  try {
+    const state = {
+      // שדות גלובליים לפי ID
+      globals: {},
+      // אלמנטים דינמיים
+      intlFlights: [],
+      domFlights:  [],
+      hotels:      [],
+      transfers:   [],
+      attrBangkok: [],
+      attrSamui:   [],
+      attrPattaya: [],
+      // הוצאות
+      expA: [],
+      expB: [],
+    };
+
+    // שדות גלובליים (IDs ידועים וסטטיים)
+    const globalIds = [
+      'depDate','retDate','numTrav','fam1Name','fam2Name','fam1Pax','fam2Pax',
+      'numDays','tlStart','sharedNotes','thbRate','conv-amt','conv-from',
+      'h-bkk-link','h-bkk-loc',
+    ];
+    globalIds.forEach(id => {
+      const el = document.getElementById(id);
+      if(el) state.globals[id] = el.value;
+    });
+
+    // שמירת contenteditable סטטיים לפי data-ceid
+    state.ces = {};
+    document.querySelectorAll('[contenteditable][data-ceid]').forEach(el => {
+      state.ces[el.dataset.ceid] = el.innerHTML;
+    });
+    // תן ceid לאלמנטים סטטיים שאין להם
+    document.querySelectorAll('[contenteditable]:not([data-ceid])').forEach((el, i) => {
+      // נסה לבנות ceid מ-id הורה
+      const parent = el.closest('[id]');
+      const key = (parent ? parent.id + '_' : '') + el.className.split(' ')[0] + '_' + i;
+      el.dataset.ceid = key;
+      state.ces[key] = el.innerHTML;
+    });
+
+    // טיסות בינלאומיות דינמיות (לא fi1, fi2 — הם סטטיים)
+    document.querySelectorAll('#intl-flights-list .flight-card').forEach(card => {
+      if(card.id === 'fi1' || card.id === 'fi2') return; // סטטיים — נשמרים ב-ces
+      const spans = card.querySelectorAll('.flight-route span[contenteditable]');
+      const ffs = card.querySelectorAll('.ff-val');
+      state.intlFlights.push({
+        id: card.id,
+        from: spans[0]?.innerHTML || '',
+        to:   spans[1]?.innerHTML || '',
+        type: card.querySelector('.flight-type')?.textContent || '',
+        airline: ffs[0]?.innerHTML || '',
+        flightNum: ffs[1]?.innerHTML || '',
+        date: ffs[2]?.innerHTML || '',
+        dep:  ffs[3]?.innerHTML || '',
+        arr:  ffs[4]?.innerHTML || '',
+        conf: ffs[5]?.innerHTML || '',
+        notes:ffs[6]?.innerHTML || '',
+        status: card.querySelector('.status-sel')?.value || 'pending',
+        priceA: card.querySelector('.flt-a-pp')?.value || '',
+        priceB: card.querySelector('.flt-b-pp')?.value || '',
+      });
+    });
+
+    // טיסות פנים דינמיות (לא fd1 — סטטי)
+    document.querySelectorAll('#dom-flights-list .flight-card').forEach(card => {
+      if(card.id === 'fd1') return;
+      const spans = card.querySelectorAll('.flight-route span[contenteditable]');
+      const ffs = card.querySelectorAll('.ff-val');
+      state.domFlights.push({
+        id: card.id,
+        from: spans[0]?.innerHTML || '',
+        to:   spans[1]?.innerHTML || '',
+        airline: ffs[0]?.innerHTML || '',
+        flightNum: ffs[1]?.innerHTML || '',
+        date: ffs[2]?.innerHTML || '',
+        dep:  ffs[3]?.innerHTML || '',
+        arr:  ffs[4]?.innerHTML || '',
+        conf: ffs[5]?.innerHTML || '',
+        notes:ffs[6]?.innerHTML || '',
+        status: card.querySelector('.status-sel')?.value || 'pending',
+        priceA: card.querySelector('.flt-a-pp')?.value || '',
+        priceB: card.querySelector('.flt-b-pp')?.value || '',
+      });
+    });
+
+    // מלונות דינמיים (לא h-bkk — סטטי)
+    document.querySelectorAll('#hotels-list .hotel-card').forEach(card => {
+      if(card.id === 'h-bkk') return;
+      state.hotels.push({
+        id: card.id,
+        title: card.querySelector('.hotel-hdr-title')?.innerHTML || '',
+        name:  card.querySelectorAll('.hotel-body input.inp')[0]?.value || '',
+        rating:card.querySelectorAll('.hotel-body input.inp')[1]?.value || '',
+        checkin: card.querySelector('input[type="date"]')?.value || '',
+        checkout:card.querySelectorAll('input[type="date"]')[1]?.value || '',
+        link:  card.querySelector('.inp-ltr[id$="-link"]')?.value || '',
+        loc:   card.querySelector('.inp-ltr[id$="-loc"]')?.value || '',
+        status:card.querySelector('.status-sel')?.value || 'pending',
+        priceA:card.querySelector('.h-a-price')?.value || '',
+        nightsA:card.querySelector('.h-a-nights')?.value || '',
+        priceB:card.querySelector('.h-b-price')?.value || '',
+        nightsB:card.querySelector('.h-b-nights')?.value || '',
+      });
+    });
+
+    // העברות דינמיות
+    document.querySelectorAll('#airport-transfers .transfer-card').forEach((card, i) => {
+      const isStatic = card.closest('#airport-transfers')?.children[0] === card && i === 0;
+      const spans = card.querySelectorAll('.tr-route span[contenteditable]');
+      const tfs = card.querySelectorAll('.tr-val');
+      const hdrStyle = card.querySelector('.tr-hdr')?.getAttribute('style') || '';
+      state.transfers.push({
+        idx: i,
+        from: spans[0]?.innerHTML || '',
+        to:   spans[1]?.innerHTML || '',
+        hdrStyle,
+        type:  tfs[0]?.innerHTML || '',
+        date:  tfs[1]?.innerHTML || '',
+        time:  tfs[2]?.innerHTML || '',
+        cost:  tfs[3]?.innerHTML || '0',
+        notes: tfs[4]?.innerHTML || '',
+        status:card.querySelector('.status-sel')?.value || 'pending',
+      });
+    });
+
+    // אטרקציות
+    ['bangkok','samui','pattaya'].forEach(area => {
+      const grid = document.getElementById('ag-' + area);
+      if(!grid) return;
+      const arr = [];
+      grid.querySelectorAll('.attr-card').forEach(card => {
+        arr.push({
+          name:  card.querySelector('.attr-name')?.innerHTML || '',
+          cost:  card.querySelector('.badge.b-teal')?.textContent?.replace(/[^0-9]/g,'') || '0',
+          dur:   card.querySelector('.badge.b-gold')?.textContent?.replace('⏱️ ','') || '',
+          notes: card.querySelector('.attr-notes')?.innerHTML || '',
+          attrId:card.dataset.attrId || '',
+        });
+      });
+      state['attr' + area.charAt(0).toUpperCase() + area.slice(1)] = arr;
+    });
+
+    // הוצאות
+    ['exp-a-table','exp-b-table'].forEach(tbId => {
+      const rows = [];
+      document.querySelectorAll('#'+tbId+' tr').forEach(tr => {
+        const tds = tr.querySelectorAll('td');
+        if(tds.length < 4) return;
+        rows.push([tds[0].innerHTML, tds[1].innerHTML, tds[2].innerHTML, tds[3].innerHTML]);
+      });
+      if(tbId === 'exp-a-table') state.expA = rows;
+      else state.expB = rows;
+    });
+
+    // ציר זמן
+    state.timeline = [];
+    document.querySelectorAll('#tl-container .tl-item').forEach((item, i) => {
+      state.timeline.push({
+        i,
+        loc:   item.querySelector('.tl-loc-sel')?.value || '',
+        date:  item.querySelector('.tl-date-inp')?.value || '',
+        notes: item.querySelector('.tl-notes')?.value || '',
+      });
+    });
+
+    localStorage.setItem('th_v7_full', JSON.stringify(state));
+    if(window.saveToFirestore) window.saveToFirestore(state);
+    else setTimeout(() => { if(window.saveToFirestore) window.saveToFirestore(state); }, 2000);
+
+    _unsaved = false;
+    const ind = document.getElementById('saveIndicator');
+    if(ind) ind.className = 'save-indicator saved';
+  } catch(e) { console.error('saveAll error:', e); }
+}
+
+function loadSaved(){
+  try {
+    const raw = localStorage.getItem('th_v7_full') || localStorage.getItem('th_v6_full');
+    if(!raw) return;
+    const state = JSON.parse(raw);
+
+    if(state.inputs){
+      Object.entries(state.inputs).forEach(([id, val]) => {
+        const el = document.getElementById(id);
+        if(!el) return;
+        if(el.type === 'checkbox') el.checked = !!val;
+        else el.value = val;
+      });
+    }
+
+    if(state.ces){
+      document.querySelectorAll('[contenteditable]').forEach(el => {
+        if(el.dataset.ceid && state.ces[el.dataset.ceid] !== undefined){
+          el.innerHTML = state.ces[el.dataset.ceid];
+        }
+      });
+    }
+  } catch(e) { console.error(e); }
+}
+
+let _cdInterval = null;
+function startCountdown(){
+  if(_cdInterval) clearInterval(_cdInterval);
+  const dep = document.getElementById('depDate').value;
+  if(!dep){ 
+    document.getElementById('cd-main').textContent = '—';
+    document.getElementById('cd-sub').textContent = 'הכנס תאריך יציאה למטה';
+    ['cd-days','cd-hrs','cd-mins'].forEach(id => document.getElementById(id).textContent = '—');
+    return; 
+  }
+  function tick(){
+    const now = new Date();
+    const target = new Date(dep);
+    const diff = target - now;
+    if(diff <= 0){
+      document.getElementById('cd-main').textContent = '🌴 הטיול התחיל!';
+      document.getElementById('cd-sub').textContent = 'בהצלחה ותהנו!';
+      document.getElementById('cd-days').textContent = '0';
+      document.getElementById('cd-hrs').textContent = '0';
+      document.getElementById('cd-mins').textContent = '0';
+      clearInterval(_cdInterval);
+      return;
+    }
+    const days = Math.floor(diff / 86400000);
+    const hrs  = Math.floor((diff % 86400000) / 3600000);
+    const mins = Math.floor((diff % 3600000)  / 60000);
+    document.getElementById('cd-main').textContent = days === 1 ? 'עוד יום אחד!' : `עוד ${days} ימים`;
+    document.getElementById('cd-sub').textContent = `יוצאים ב־${new Date(dep).toLocaleDateString('he-IL',{weekday:'long',day:'numeric',month:'long'})}`;
+    document.getElementById('cd-days').textContent = days;
+    document.getElementById('cd-hrs').textContent = String(hrs).padStart(2,'0');
+    document.getElementById('cd-mins').textContent = String(mins).padStart(2,'0');
+  }
+  tick();
+  _cdInterval = setInterval(tick, 30000);
+}
+
+const weatherCities = [
+  {name:'🏙️ בנגקוק',    lat:13.7563, lon:100.5018},
+  {name:'🌴 קוסמוי',    lat:9.5018,  lon:100.0136},
+  {name:'🎡 פטאייה',    lat:12.9236, lon:100.8825},
+];
+const wmoIcon = c => {
+  if(c===0) return '☀️';
+  if(c<=2)  return '🌤️';
+  if(c<=3)  return '☁️';
+  if(c<=48) return '🌫️';
+  if(c<=57) return '🌦️';
+  if(c<=67) return '🌧️';
+  if(c<=77) return '❄️';
+  if(c<=82) return '🌧️';
+  return '⛈️';
+};
+const wmoDesc = c => {
+  if(c===0) return 'שמיים בהירים';
+  if(c<=2)  return 'מעונן חלקית';
+  if(c<=3)  return 'מעונן';
+  if(c<=48) return 'ערפל';
+  if(c<=57) return 'גשם קל';
+  if(c<=67) return 'גשם';
+  if(c<=77) return 'שלג';
+  if(c<=82) return 'גשם חזק';
+  return 'סופה';
+};
+
+async function fetchWeather(){
+  const btn = document.getElementById('weather-refresh-btn');
+  const grid = document.getElementById('weather-live-grid');
+  btn.textContent = '⏳ טוען...';
+  btn.disabled = true;
+  grid.innerHTML = '';
+
+  try {
+    const results = await Promise.all(weatherCities.map(async city => {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${city.lat}&longitude=${city.lon}&current=temperature_2m,relative_humidity_2m,weathercode,windspeed_10m&timezone=Asia%2FBangkok`;
+      const r = await fetch(url);
+      const d = await r.json();
+      return { city, data: d.current };
+    }));
+
+    results.forEach(({city, data}) => {
+      const card = document.createElement('div');
+      card.className = 'weather-card';
+      card.innerHTML = `
+        <div class="wc-city">${city.name}</div>
+        <div class="wc-icon">${wmoIcon(data.weathercode)}</div>
+        <div class="wc-temp">${Math.round(data.temperature_2m)}°C</div>
+        <div class="wc-desc">${wmoDesc(data.weathercode)}</div>
+        <div class="wc-rain" style="margin-top:5px">💧 לחות ${data.relative_humidity_2m}% | 💨 ${Math.round(data.windspeed_10m)} km/h</div>
+      `;
+      grid.appendChild(card);
+    });
+
+    const tzCard = document.createElement('div');
+    tzCard.className = 'weather-card';
+    const now = new Date();
+    const thTime = new Date(now.toLocaleString('en-US',{timeZone:'Asia/Bangkok'}));
+    const ilTime = new Date(now.toLocaleString('en-US',{timeZone:'Asia/Jerusalem'}));
+    const diff = Math.round((thTime - ilTime) / 3600000);
+    tzCard.innerHTML = `<div class="wc-city">🇮🇱 → 🇹🇭</div><div class="wc-icon">⏰</div><div class="wc-temp">+${diff}h</div><div class="wc-desc">הפרש שעות</div><div class="wc-rain">${thTime.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'})} בבנגקוק</div>`;
+    grid.appendChild(tzCard);
+
+  } catch(e) {
+    grid.innerHTML = '<div style="padding:16px;color:var(--text-l);font-size:.82rem;grid-column:1/-1">⚠️ לא ניתן לטעון מזג אוויר — בדוק חיבור אינטרנט</div>';
+  }
+  btn.textContent = '🔄 רענן';
+  btn.disabled = false;
+}
+
+const dailyCheckItems = [
+  {id:'dc-passport', label:'🛂 דרכון + כרטיסי טיסה'},
+  {id:'dc-money',    label:'💰 ארנק + כסף מזומן (THB)'},
+  {id:'dc-phone',    label:'📱 טלפון + מטען + פאוורבנק'},
+  {id:'dc-sunscreen',label:'🧴 קרם הגנה + ספריי יתושים'},
+  {id:'dc-hat',      label:'🧢 כובע'},
+  {id:'dc-water',    label:'💧 בקבוק מים'},
+  {id:'dc-camera',   label:'📷 מצלמה / GoPro'},
+  {id:'dc-clothes',  label:'👗 בגדים מתאימים (כיסוי למקדשים?)'},
+  {id:'dc-hotel',    label:'🏨 אישור מלון + כתובת'},
+  {id:'dc-insurance',label:'🛡️ פרטי ביטוח נסיעות'},
+  {id:'dc-grab',     label:'📲 אפליקציית Grab מותקנת ופעילה'},
+  {id:'dc-meds',     label:'💊 תרופות אישיות'},
+];
+
+function buildDailyChecklist(){
+  const grid = document.getElementById('daily-checklist-grid');
+  if(!grid) return;
+  const saved = JSON.parse(localStorage.getItem('daily_cl') || '{}');
+  const checked = dailyCheckItems.filter(i => saved[i.id]).length;
+  const pct = dailyCheckItems.length ? Math.round(checked/dailyCheckItems.length*100) : 0;
+
+  grid.innerHTML = `
+    <div style="margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+        <span style="font-size:.78rem;font-weight:700;color:var(--teal-d)">${checked} / ${dailyCheckItems.length} פריטים</span>
+        <span style="font-size:.78rem;color:var(--text-l)">${pct}%</span>
+      </div>
+      <div class="bp-bar"><div class="bp-fill" style="width:${pct}%;background:linear-gradient(to right,var(--teal-d),var(--teal-l))"></div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr;gap:6px">
+      ${dailyCheckItems.map(item => `
+        <label style="display:flex;align-items:center;gap:10px;background:${saved[item.id]?'rgba(13,124,138,0.1)':'rgba(255,255,255,0.6)'};border:1px solid ${saved[item.id]?'rgba(13,124,138,0.4)':'rgba(0,0,0,0.1)'};border-radius:14px;padding:10px 14px;cursor:pointer;transition:all .15s;font-size:.83rem;font-weight:${saved[item.id]?'700':'400'};color:${saved[item.id]?'var(--teal-d)':'var(--text)'}">
+          <input type="checkbox" ${saved[item.id]?'checked':''} data-clid="${item.id}" onchange="saveDailyCheck()" style="width:17px;height:17px;accent-color:var(--teal);cursor:pointer;flex-shrink:0">
+          <span style="${saved[item.id]?'text-decoration:none':''}">${item.label}</span>
+        </label>
+      `).join('')}
+    </div>
+  `;
+}
+
+function saveDailyCheck(){
+  const saved = {};
+  document.querySelectorAll('[data-clid]').forEach(cb => { saved[cb.dataset.clid] = cb.checked; });
+  localStorage.setItem('daily_cl', JSON.stringify(saved));
+  buildDailyChecklist();
+}
+
+function resetDailyChecklist(){
+  if(!confirm('לאפס את הצ׳קליסט היומי?')) return;
+  localStorage.removeItem('daily_cl');
+  buildDailyChecklist();
+}
+
+function openMap(inputId, directQuery){
+  const q = directQuery || (inputId ? document.getElementById(inputId)?.value?.trim() : '');
+  if(!q){ alert('הכנס שם מלון / מיקום קודם'); return; }
+  window.open('https://www.google.com/maps/search/' + encodeURIComponent(q), '_blank');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  loadAttrs();
+  buildPacking();
+  buildDailyChecklist();
+  loadSaved(); // טעינה מיידית מ-localStorage
+  genTimeline();
+  calcBudgets();
+  countHotels();
+  countAttr();
+  updatePax();
+  updateProgress();
+  calcDays();
+  startCountdown();
+
+  // סנכרון נוסעים בכל שינוי
+  ['fam1Pax','fam2Pax','numTrav'].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.addEventListener('input', () => { updatePax(); dQ(); });
+  });
+
+  // טעינה מ-Firestore — אחרי שכל ה-DOM מוכן
+  // מחכה ש-Firebase Auth יסיים (שיגדיר _firestoreLoadPending)
+  var _loadTries=0;
+  function tryFirestoreLoad(){
+    _loadTries++;
+    if(window._firestoreLoadPending && window.loadFromFirestore){
+      window._firestoreLoadPending = false;
+      window.loadFromFirestore();
+    } else if(_loadTries < 50){
+      setTimeout(tryFirestoreLoad, 200);
+    }
+  }
+  setTimeout(tryFirestoreLoad, 300);
+});
+
+
+</script><div class="save-bar">
+  <div class="save-bar-left">
+    <div class="save-indicator saved" id="saveIndicator">
+      <div class="save-dot"></div>
+      <span>סנכרון נתונים</span>
+    </div>
+  </div>
+  <button class="btn-save" onclick="saveAll(true)">💾 שמור</button>
+</div>
+
+<div id="auth-overlay" style="display:flex">
+  <div class="auth-box">
+    <div class="auth-header">
+      <div style="font-size:2.2rem;margin-bottom:6px">🌴</div>
+      <div class="auth-header-title">THAILAND 2026</div>
+      <div class="auth-header-sub">כניסה לתכנון הטיול המשפחתי</div>
+    </div>
+    <div class="auth-tabs">
+      <button class="auth-tab active" id="auth-tab-login" onclick="switchAuthTab('login')">התחברות</button>
+      <button class="auth-tab" id="auth-tab-register" onclick="switchAuthTab('register')">הרשמה</button>
+    </div>
+
+    <div class="auth-panel" id="auth-panel-login" style="display:block">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+        <input class="auth-inp" id="login-email" type="email" placeholder="אימייל" dir="ltr" style="text-align:center">
+        <input class="auth-inp" id="login-pass"  type="password" placeholder="סיסמה" dir="ltr" style="text-align:center">
+        <div class="auth-err" id="login-err"></div>
+        <button class="auth-btn" onclick="fbLogin()" style="display:flex;justify-content:center">🔐 התחבר</button>
+        <button class="auth-btn auth-btn-google" onclick="fbGoogleLogin()" style="display:flex;justify-content:center">
+          <span style="font-size:1rem;margin-left:5px">G</span> התחבר עם Google
+        </button>
+        <div class="auth-divider"><span>או</span></div>
+        <button class="auth-btn auth-btn-guest" onclick="fbGuestLogin()" style="display:flex;justify-content:center">
+          🌴 כניסה כאורח (צפייה בלבד)
+        </button>
+      </div>
+    </div>
+
+    <div class="auth-panel" id="auth-panel-register" style="display:none">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:12px">
+        <input class="auth-inp" id="reg-name"  type="text"     placeholder="שם מלא" dir="rtl" style="text-align:center">
+        <input class="auth-inp" id="reg-email" type="email"    placeholder="אימייל" dir="ltr" style="text-align:center">
+        <input class="auth-inp" id="reg-pass"  type="password" placeholder="סיסמה (6+ תווים)" dir="ltr" style="text-align:center">
+        <div style="font-size:.75rem;font-weight:700;color:var(--text-l);margin-top:4px">בחר אווטאר</div>
+        <div class="av-grid" id="register-avatar-grid" style="width:100%"></div>
+        <div class="auth-err" id="reg-err"></div>
+        <button class="auth-btn" onclick="fbRegister()" style="display:flex;justify-content:center">🌴 הירשם</button>
+        <button class="auth-btn auth-btn-google" onclick="fbGoogleLogin()" style="display:flex;justify-content:center">
+          <span style="font-size:1rem;margin-left:5px">G</span> הרשמה עם Google
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="user-panel-overlay" style="display:none" onclick="if(event.target===this)closeUserPanel()">
+  <div class="user-panel">
+    <div class="user-panel-hdr">
+      <div class="user-panel-title">👤 הפרופיל שלי</div>
+      <button onclick="closeUserPanel()" style="background:rgba(255,255,255,.2);border:none;color:#fff;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:1rem">✕</button>
+    </div>
+    <div class="user-panel-body" style="text-align:center;padding:24px">
+      <div id="panel-avatar-preview" style="margin:0 auto 16px;width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:36px;background:var(--teal);box-shadow:0 4px 16px rgba(13,124,138,0.3);border:3px solid #fff"></div>
+      <div style="font-size:.9rem;font-weight:700;color:var(--text-l);margin-bottom:12px">שם תצוגה</div>
+      <div style="display:flex;flex-direction:column;align-items:center;gap:12px;margin-bottom:24px">
+        <input type="text" id="profile-display-name" class="inp" placeholder="השם שלך..." style="text-align:center;max-width:200px">
+        <button class="btn btn-teal" onclick="updateProfileName()" style="width:100%;max-width:200px;justify-content:center">שמור שם</button>
+      </div>
+      <div style="height:1px;background:rgba(0,0,0,0.1);margin-bottom:24px;width:100%"></div>
+
+      <div style="font-size:.9rem;font-weight:700;color:var(--text-l);margin-bottom:12px">שנה אווטאר</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px" id="profile-avatar-grid"></div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
