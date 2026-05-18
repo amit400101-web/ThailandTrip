@@ -983,6 +983,13 @@ const db   = firebase.firestore();
 const ADMIN_UID = 'i7wwUriW1hVwERBQUThtP6ZN1Ew1';
 const TRIP_DOC  = db.collection('tripData').doc('main');
 
+
+// 🛠️ השורות החדשות שיפתרו את שגיאות ה-WebChannel וה-RPC:
+db.settings({
+  experimentalForceLongPolling: true, // מאלץ שימוש בפרוטוקול HTTP יציב שאינו נחסם
+  merge: true
+});
+
 /* ══════════════════════════════════════════════════════
    STATE & GLOBALS
 ══════════════════════════════════════════════════════ */
