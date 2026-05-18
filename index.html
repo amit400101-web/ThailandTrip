@@ -1455,11 +1455,21 @@ function applyState(state){
 
   // חישובים
  // החלק התחתון של פונקציית applyState:
-setTimeout(()=>{
-  calcBudgets(); updatePax(); updateProgress(); countHotels();
-  countAttr(); calcDays(); startCountdown(); updateFamNames();
-}isLoading = false; // 🔓 הטעינה הסתיימה בהצלחה, כעת המערכת רשאית לשמור שינויים חדשים
-}, 100);
+// 🔽 הבלוק המתוקן והנכון של ה-setTimeout:
+  setTimeout(() => {
+    calcBudgets(); 
+    updatePax(); 
+    updateProgress(); 
+    countHotels();
+    countAttr(); 
+    calcDays(); 
+    startCountdown(); 
+    updateFamNames();
+    
+    // ✅ המשתנה חייב לשבת כאן - בפנים, לפני שסוגרים את הבלוק!
+    isLoading = false; 
+  }, 100);
+} // <--- מוודא שזה הסוגר המסולסל הסופי של כל פונקציית applyState
 function fillFlight(div, f){
   const spans = div.querySelectorAll('.flight-route span[contenteditable]');
   if(spans[0]) spans[0].innerHTML = f.from;
