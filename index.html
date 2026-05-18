@@ -985,9 +985,9 @@ const TRIP_DOC  = db.collection('tripData').doc('main');
 
 // ✅ התיקון המעודכן שמונע את ההתנגשות ומייצב את החיבור:
 db.settings({
-  experimentalForceLongPolling: true,         // מאלץ מעבר לפרוטוקול היציב
-  experimentalAutoDetectLongPolling: false    // מכבה את הזיהוי האוטומטי כדי למנוע את השגיאה
-});
+  experimentalForceLongPolling: true,
+  experimentalAutoDetectLongPolling: false
+}, { merge: true });
 
 /* ══════════════════════════════════════════════════════
    STATE & GLOBALS
@@ -1006,6 +1006,7 @@ const AVATARS = [
 let currentUser  = null;
 let currentAvatar= AVATARS[0];
 let canEdit      = false;
+let isLoading    = true; // 🔒 חוסם שמירה אוטומטית של דף ריק בזמן טעינה
 let unsubChat    = null;
 let unsubUsers   = null;
 
@@ -1453,12 +1454,13 @@ function applyState(state){
   }
 
   // חישובים
-  setTimeout(()=>{
-    calcBudgets(); updatePax(); updateProgress(); countHotels();
-    countAttr(); calcDays(); startCountdown(); updateFamNames();
-  }, 100);
-}
+ // החלק התחתון של פונקציית applyState:
+setTimeout(()=>{
+  calcBudgets(); updatePax(); updateProgress(); countHotels();
+  countAttr(); calcDays(); startCountdown(); updateFamNames();
 
+  isLoading = false; // 🔓 הטעינה הסתיימה בהצלחה, כעת המערכת רשאית לשמור שינויים חדשים
+}, 100);
 function fillFlight(div, f){
   const spans = div.querySelectorAll('.flight-route span[contenteditable]');
   if(spans[0]) spans[0].innerHTML = f.from;
@@ -1558,7 +1560,9 @@ function buildTransferHTML(t){
    SAVE ALL → FIRESTORE
 ══════════════════════════════════════════════════════ */
 function saveAll(manual=false){
-  try{
+  if (isLoading && !manual) return; // ⛔ אם הדף עדיין בטעינה, אל תשמור אוטומטית כלום!
+
+  try {
     const state = {
       globals:{}, ces:{},
       intlFlights:[], domFlights:[], hotels:[], transfers:[],
